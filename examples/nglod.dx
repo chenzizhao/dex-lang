@@ -1,1 +1,56 @@
 ' #### reimplement https://github.com/nv-tlabs/nglod/blob/main/sdf-net/lib/models/OctreeSDF.py
+
+key = newKey 0
+
+Position = Fin 3 => Float
+Feature = Fin 32 => Float
+Distance = Float
+LOD = Int
+
+-- parameters
+Hidden_t = Fin 128
+pos_invariant = True
+-- only support joint decoder mode TODO-1
+joint_decoder_mode = True
+-- only support prediction mode
+prediction_mode = True
+
+-- functions
+def mlp (v1 : in => Float)
+        (w1 : in=>hidden=>Float)
+        (b1 : hidden => Float)
+        (w2 : hidden => out => Float)
+        (b2 : out=>Float)
+        : out=>Float = 
+    -- two linear layers with relu activation
+    relu = \x.(max x 0.)
+    v2 = map relu $ (transpose w1) **. v1 + b1
+    (transpose w2) **. v2 + b2
+
+-- TODO load pretrained data I/O
+def getWeight (in:Type) (hidden:Type) (out:Type)
+    : (in=>hidden=>Float & hidden => Float & hidden => out => Float & out=>Float) = 
+    (arb key, arb key, arb key, arb key)
+
+-- "decoder" in OctreeSDF
+def surface_extract (x:Position)(z:Feature) : Distance = 
+    (AsList input_dim input) = if pos_invariant 
+        then (AsList _ x) 
+        else (AsList _ x) <> (AsList _ z)
+    (w1, b1, w2, b2) = getWeight (Fin input_dim) Hidden_t (Fin 1)
+    out = mlp input w1 b1 w2 b2
+    out.(0@_)
+
+-- "FeatureVolume.forward" in OctreeSDF
+def build_features (lod:LOD) (x:Position) : Feature = 
+    -- TODO-2 implement features
+    arb key
+
+def query (lod:LOD) (x:Position): Distance = 
+    z = yieldState zero \z_ref.
+            for i:(Fin lod).
+                z_cur = get z_ref
+                z_ref := z_cur + build_features (ordinal i) x
+    surface_extract x z
+
+:p query 1 one
