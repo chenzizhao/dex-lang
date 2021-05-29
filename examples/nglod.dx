@@ -1,56 +1,164 @@
-' #### reimplement https://github.com/nv-tlabs/nglod/blob/main/sdf-net/lib/models/OctreeSDF.py
+' ### reimplement OctreeSDF
+<https://github.com/nv-tlabs/nglod/blob/main/sdf-net/lib/models/OctreeSDF.py>
+2D only
 
 key = newKey 0
+import plot
 
-Position = Fin 3 => Float
-Feature = Fin 32 => Float
+Height = Fin 10
+Width = Fin 10
+-- should bemore pixels
+Position_t = Fin 2
+Feature_t = Fin 0
+-- should be 32 features
+Position = Fin 2 => Float
+Feature = Fin 0 => Float
+-- should be 32 features
 Distance = Float
 LOD = Int
 
+def plotsdf (sdf:(Position -> Distance)) : Height=>Width=>Distance = 
+    for x y.
+        center = IToF (size Height)/2.
+        l = ((IToF ((ordinal y)) - center) / IToF (size Height))
+        v = ((IToF ((ordinal x)) - center) / IToF (size Width))
+        sdf [l*1., v*1.]
+
+' ### Construct a target 2D SDF
+
+def circlesdf (p:Position) (r:Float):Distance = 
+    dist = sqrt $ sum $ for d. (sq p.d)
+    max dist r
+
+def squaresdf (p:Position) (center:Position) (halfedge:Float):Distance = 
+    is_in_square_arr = for d. halfedge > abs (p.d-center.d)
+    if (all is_in_square_arr) then 0. else 1.
+
+def targetSDF (p:Position):Distance = 
+    r1 = 0.05
+    r2 = 0.10
+    offset2 : Position = [0.20, 0.05]
+    d1 = circlesdf p r1
+    d3 = squaresdf p offset2 r2
+    -- min d1 d3
+    d3
+
+target = plotsdf targetSDF
+-- :html matshow target
+
+
+' ### Build the OctreeSDF
+
 -- parameters
 Hidden_t = Fin 128
+In_t = {leftout: Position_t | rightout: Feature_t}
+Out_t = Fin 1
+WnB : Type = (In_t=>Hidden_t=>Float & Hidden_t => Float & Hidden_t => Out_t => Float & Out_t=>Float)
 pos_invariant = True
 -- only support joint decoder mode TODO-1
 joint_decoder_mode = True
--- only support prediction mode
-prediction_mode = True
 
--- functions
-def mlp (v1 : in => Float)
-        (w1 : in=>hidden=>Float)
-        (b1 : hidden => Float)
-        (w2 : hidden => out => Float)
-        (b2 : out=>Float)
-        : out=>Float = 
-    -- two linear layers with relu activation
+' ##### the Octree part
+
+-- linear_interp is a helper funcion of bilinear_interp
+def linear_interp
+        (x1:Float) (x2:Float) 
+        (k1:Float) (k2:Float) 
+        (x:Float) : Float = 
+    w = (x-x1) / (x2-x1)
+    k1 * (1.-w) + k2 * w
+
+-- bilinear_interp is a helper function of spatial_features
+def bilinear_interp
+        (p1:Position) (p2:Position) (p3:Position) (p4:Position)
+        (k1:Float) (k2:Float) (k3:Float) (k4:Float)
+        (p:Position) : Float = 
+    -- assume the following geometric arrangement
+    --
+    --  0------------W (dim 1)
+    --  |   p1    p3
+    --  |      p
+    --  |   p2    p4 
+    --  H(dim 0)
+    --
+    v1 = linear_interp p1.(0@_) p2.(0@_) k1 k2 p.(0@_)
+    v2 = linear_interp p3.(0@_) p4.(0@_) k3 k4 p.(0@_)
+    v3 = linear_interp p1.(1@_) p3.(1@_) v1 v2 p.(1@_)
+    v3
+
+-- "FeatureVolume.forward" in OctreeSDF
+-- reimplementing torch.nn.Functional.grid_sample 
+def spatial_features (lod:LOD) (x:Position) : Feature = 
+    -- TODO-2
+    zero
+
+' output = grid_sample(input, grid) is a function used in the original OctreeSDF <https://www.programmersought.com/article/10374524300/>
+<https://pytorch.org/docs/stable/nn.functional.html#torch.nn.functional.grid_sample> here only the 4D input grid_sample is implemented
+
+' ##### the neural net part
+
+def mlp (v1 : In_t => Float) ((w1,b1,w2,b2) : WnB)
+        : Out_t=>Float = 
+    -- two linear layers with relu activation in between
     relu = \x.(max x 0.)
     v2 = map relu $ (transpose w1) **. v1 + b1
     (transpose w2) **. v2 + b2
 
--- TODO load pretrained data I/O
-def getWeight (in:Type) (hidden:Type) (out:Type)
-    : (in=>hidden=>Float & hidden => Float & hidden => out => Float & out=>Float) = 
-    (arb key, arb key, arb key, arb key)
+' ##### Combine Octree and nn
 
--- "decoder" in OctreeSDF
-def surface_extract (x:Position)(z:Feature) : Distance = 
-    (AsList input_dim input) = if pos_invariant 
-        then (AsList _ x) 
-        else (AsList _ x) <> (AsList _ z)
-    (w1, b1, w2, b2) = getWeight (Fin input_dim) Hidden_t (Fin 1)
-    out = mlp input w1 b1 w2 b2
+def concatTable (left: a=>v) (right: b=>v) : ({leftout:a | rightout:b }=>v) =
+  for idx. case idx of
+    {| leftout = i  |} -> left.i
+    {| rightout = i |} -> right.i
+
+def OctreeSDF (lod:LOD) (wnb:WnB) (x:Position): Distance = 
+    z:Feature = yieldState zero \z_ref.
+            for i:(Fin lod).
+                lod = ordinal i
+                z_cur = get z_ref
+                z_ref := z_cur + spatial_features lod x
+    input = concatTable x z
+    out = mlp input wnb
     out.(0@_)
 
--- "FeatureVolume.forward" in OctreeSDF
-def build_features (lod:LOD) (x:Position) : Feature = 
-    -- TODO-2 implement features
-    arb key
+' ### Training
 
-def query (lod:LOD) (x:Position): Distance = 
-    z = yieldState zero \z_ref.
-            for i:(Fin lod).
-                z_cur = get z_ref
-                z_ref := z_cur + build_features (ordinal i) x
-    surface_extract x z
+instance [Arbitrary a] Arbitrary (In_t=>Float)
+    arb = \key.
+        for ind. case ind of
+            {| leftout = i  |} -> arb $ ixkey key i
+            {| rightout = i |} -> arb $ ixkey key i
+            -- TODO the second half is not quite random
 
-:p query 1 one
+def lossl2 (wnb: WnB) (lod: LOD) (target: Height=>Width=>Distance): Float = 
+    curr = plotsdf \x.(OctreeSDF lod wnb x)
+    diff2 = for i j. sq $ target.i.j-curr.i.j 
+    sum $ for i. sum diff2.i
+
+instance [Add a, Add b] Add (a & b)
+  add = \(a, b) (c, d). ( (a + c), (b + d))
+  sub = \(a, b) (c, d). ( (a - c), (b - d))
+  zero = (zero, zero)
+
+instance [VSpace a, VSpace b] VSpace (a & b)
+  scaleVec = \ s (a, b) . (scaleVec s a, scaleVec s b)
+
+-- training parameters
+lod : LOD = 1
+lr : Float = 0.0001
+iters : Int = 10000
+
+wnbout:WnB = yieldState (arb key) \wnb_ref.
+    for i:(Fin iters).
+        wnb = get wnb_ref
+        losswrap = \w. (lossl2 w lod target)
+        gradient = (grad losswrap) wnb
+        wnb_ref := wnb - scaleVec lr gradient
+
+im2 = plotsdf \x. OctreeSDF lod wnbout x
+
+:html matshow target
+
+:html matshow im2
+
+-- TODO-3 raymarch to render
