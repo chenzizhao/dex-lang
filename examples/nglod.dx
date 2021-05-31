@@ -1,4 +1,4 @@
-' ### reimplement OctreeSDF
+' ## Reimplement NGLOD - OctreeSDF
 <https://github.com/nv-tlabs/nglod/blob/main/sdf-net/lib/models/OctreeSDF.py>
 2D only
 
@@ -7,7 +7,7 @@ import plot
 
 Height = Fin 10
 Width = Fin 10
--- should bemore pixels
+-- should be more pixels
 Position_t = Fin 2
 Feature_t = Fin 0
 -- should be 32 features
@@ -17,12 +17,15 @@ Feature = Fin 0 => Float
 Distance = Float
 LOD = Int
 
+def plotsdfpoint (sdf:(Position -> Distance)) (x:Height) (y:Width) : Distance = 
+    center = IToF (size Height)/2.
+    l = ((IToF ((ordinal y)) - center) / IToF (size Height))
+    v = ((IToF ((ordinal x)) - center) / IToF (size Width))
+    sdf [l*1., v*1.]
+
 def plotsdf (sdf:(Position -> Distance)) : Height=>Width=>Distance = 
     for x y.
-        center = IToF (size Height)/2.
-        l = ((IToF ((ordinal y)) - center) / IToF (size Height))
-        v = ((IToF ((ordinal x)) - center) / IToF (size Width))
-        sdf [l*1., v*1.]
+        plotsdfpoint sdf x y
 
 ' ### Construct a target 2D SDF
 
@@ -54,7 +57,6 @@ Hidden_t = Fin 128
 In_t = {leftout: Position_t | rightout: Feature_t}
 Out_t = Fin 1
 WnB : Type = (In_t=>Hidden_t=>Float & Hidden_t => Float & Hidden_t => Out_t => Float & Out_t=>Float)
-pos_invariant = True
 -- only support joint decoder mode TODO-1
 joint_decoder_mode = True
 
@@ -97,12 +99,21 @@ def spatial_features (lod:LOD) (x:Position) : Feature =
 
 ' ##### the neural net part
 
-def mlp (v1 : In_t => Float) ((w1,b1,w2,b2) : WnB)
+def maximum2 [Ord o] (xs:n=>o) : o = 
+    fold xs.(0@_) \i curr. max curr xs.i
+
+def softmax2 (x: n=>Float) : n=>Float =
+  m = maximum2 x
+  e =  for i. exp (x.i - m)
+  s = sum e
+  for i. e.i / s
+
+def mlp (v1: In_t=>Float) ((w1,b1,w2,b2): WnB)
         : Out_t=>Float = 
     -- two linear layers with relu activation in between
     relu = \x.(max x 0.)
     v2 = map relu $ (transpose w1) **. v1 + b1
-    (transpose w2) **. v2 + b2
+    softmax2 $ (transpose w2) **. v2 + b2
 
 ' ##### Combine Octree and nn
 
@@ -125,15 +136,24 @@ def OctreeSDF (lod:LOD) (wnb:WnB) (x:Position): Distance =
 
 instance [Arbitrary a] Arbitrary (In_t=>Float)
     arb = \key.
-        for ind. case ind of
-            {| leftout = i  |} -> arb $ ixkey key i
-            {| rightout = i |} -> arb $ ixkey key i
-            -- TODO the second half is not quite random
+        for ind.
+            [keyl, keyr] = splitKey $ ixkey key ind
+            case ind of
+                {| leftout = i  |} -> arb keyl
+                {| rightout = i |} -> arb keyr
 
-def lossl2 (wnb: WnB) (lod: LOD) (target: Height=>Width=>Distance): Float = 
-    curr = plotsdf \x.(OctreeSDF lod wnb x)
-    diff2 = for i j. sq $ target.i.j-curr.i.j 
-    sum $ for i. sum diff2.i
+def l2losspoint (wnb: WnB) (lod: LOD) (point:(Height&Width)) : Float = 
+    (i, j) = point
+    curr_sdf = \x. (OctreeSDF lod wnb x)
+    pred = plotsdfpoint curr_sdf i j
+    sq $ pred - target.i.j
+
+def l2loss (wnb: WnB) (lod: LOD) : Float = 
+    pred = plotsdf \x.(OctreeSDF lod wnb x)
+    diff2 = for i j. sq $ target.i.j-pred.i.j 
+    sumofsq = sum $ for i. sum diff2.i
+    n = (size Height) * (size Width)
+    sumofsq / IToF n
 
 instance [Add a, Add b] Add (a & b)
   add = \(a, b) (c, d). ( (a + c), (b + d))
@@ -145,20 +165,46 @@ instance [VSpace a, VSpace b] VSpace (a & b)
 
 -- training parameters
 lod : LOD = 1
-lr : Float = 0.0001
+lr : Float = 0.01
 iters : Int = 10000
+
+sz_sgd : Int = 5
+catch do assert $ (size Height) * (size Width) > sz_sgd
 
 wnbout:WnB = yieldState (arb key) \wnb_ref.
     for i:(Fin iters).
         wnb = get wnb_ref
-        losswrap = \w. (lossl2 w lod target)
-        gradient = (grad losswrap) wnb
+        loss = \w. (l2loss w lod)
+        gradient = (grad loss) wnb
         wnb_ref := wnb - scaleVec lr gradient
 
-im2 = plotsdf \x. OctreeSDF lod wnbout x
+'wnbout_sgd:WnB = yieldState (arb key) \wnb_ref.
+    for i:(Fin iters).
+        keyi = ixkey key i
+        wnb = get wnb_ref
+        samples = for k : (Fin sz_sgd).
+            [keyx, keyy] = splitKey $ ixkey keyi k
+            (arb keyx, arb keyy)
+        loss = \w.
+            pointlosswrap = \point. (l2losspoint w lod point)
+            mean $ for k. pointlosswrap samples.k
+        gradient = (grad loss) wnb
+        wnb_ref := wnb - scaleVec lr gradient
 
 :html matshow target
 
+wnbinit:WnB = arb key
+im1 = plotsdf \x. (OctreeSDF lod wnbinit x)
+:html matshow im1
+
+im2 = plotsdf \x. OctreeSDF lod wnbout x
 :html matshow im2
+
+-- im3 = plotsdf \x. OctreeSDF lod wnbout_sgd x
+-- :html matshow im3
+
+:p target
+:p im1
+:p im2
 
 -- TODO-3 raymarch to render
