@@ -8,7 +8,7 @@ key = newKey 0
 Height = Fin 100
 Width = Fin 100
 Position_t = Fin 2
-Feature_t = Fin 4
+Feature_t = Fin 3
 Position = Position_t => Float
 Feature = Feature_t => Float
 Distance = Float
@@ -118,10 +118,10 @@ def queryInputTable (pos:Position) (table: InputSubTable n) : Float =
 
 -- "FeatureVolume.forward" in OctreeSDF
 -- reimplementing torch.nn.Functional.grid_sample 
-def spatialFeatures (lod:LOD) (x:Position) : Feature = 
-    edge = lod+1
-    inputTable = getInputTable edge
-    inputPos = reverse for d. IToF lod / 2.0 * (x.d+1.)
+def spatialFeatures (edge:Int) (x:Position) : Feature = 
+    edge1 = edge+1
+    inputTable = getInputTable edge1
+    inputPos = reverse for d. IToF edge / 2.0 * (x.d+1.)
     p1w = floor inputPos.(0@_)
     p1h = floor inputPos.(1@_)
     p1 = [p1h, p1w]
@@ -155,6 +155,11 @@ def l2losspoint (sdf: Position->Distance) (point:(Height&Width)) : Float =
     pred = plotsdfpoint sdf i j
     sq $ pred - target.i.j
 
+def l2loss (sdf: Position->Distance) (target: Height=>Width=>Float) : Float = 
+    pred = plotsdf sdf
+    diff2 = sq (pred-target)
+    sum for i. sum diff2.i
+
 ' ##### Combine Octree and nn
 
 def concatTable (left: a=>v) (right: b=>v) : ({leftout:a | rightout:b }=>v) =
@@ -165,19 +170,20 @@ def concatTable (left: a=>v) (right: b=>v) : ({leftout:a | rightout:b }=>v) =
 def octreeSDF (lod:LOD) (wnb:WnB) (x:Position): Distance = 
     z:Feature = yieldState zero \z_ref.
         for i:(Fin lod).
-            lod = ordinal i
+            -- Is this really right? TODO-3 
+            edge = FToI $ pow 2. $ IToF $ ordinal i
+            -- edge = ordinal i
             z_cur = get z_ref
-            z_ref := z_cur + spatialFeatures lod x
+            z_ref := z_cur + spatialFeatures edge x
     input = concatTable x z
     out = mlp input wnb
     out.(0@_)
 
 ' ### Training
 
--- training parameters
-lod : LOD = 1
+lod : LOD = 3
 lr : Float = 0.01
-iters : Int = 10000
+iters : Int = 20000
 minibatch_sz : Int = 5
 catch do assert $ (size Height) * (size Width) > minibatch_sz
 
@@ -196,9 +202,13 @@ wnb_sgd:WnB = yieldState (arb key) \wnb_ref.
         gradient = (grad loss) wnb
         wnb_ref := wnb - scaleVec lr gradient
 
+final_sdf = \x. octreeSDF lod wnb_sgd x
+final_loss = l2loss final_sdf target
+:p final_loss
+
 :html matshow target
 
-im = plotsdf \x. octreeSDF lod wnb_sgd x
+im = plotsdf final_sdf
 :html matshow im
 
 -- TODO-2 raymarch to render SDF
