@@ -2,26 +2,31 @@
 <https://github.com/nv-tlabs/nglod/blob/main/sdf-net/lib/models/OctreeSDF.py>
 2D only
 
-key = newKey 0
 import plot
+key = newKey 0
 
-Height = Fin 10
-Width = Fin 10
--- should be more pixels
+Height = Fin 100
+Width = Fin 100
 Position_t = Fin 2
-Feature_t = Fin 0
--- should be 32 features
-Position = Fin 2 => Float
-Feature = Fin 0 => Float
--- should be 32 features
+Feature_t = Fin 4
+Position = Position_t => Float
+Feature = Feature_t => Float
 Distance = Float
 LOD = Int
+
+instance [Add a, Add b] Add (a & b)
+  add = \(a, b) (c, d). ( (a + c), (b + d))
+  sub = \(a, b) (c, d). ( (a - c), (b - d))
+  zero = (zero, zero)
+
+instance [VSpace a, VSpace b] VSpace (a & b)
+  scaleVec = \ s (a, b) . (scaleVec s a, scaleVec s b)
 
 def plotsdfpoint (sdf:(Position -> Distance)) (x:Height) (y:Width) : Distance = 
     center = IToF (size Height)/2.
     l = ((IToF ((ordinal y)) - center) / IToF (size Height))
     v = ((IToF ((ordinal x)) - center) / IToF (size Width))
-    sdf [l*1., v*1.]
+    sdf [l, v]
 
 def plotsdf (sdf:(Position -> Distance)) : Height=>Width=>Distance = 
     for x y.
@@ -47,31 +52,31 @@ def targetSDF (p:Position):Distance =
     d3
 
 target = plotsdf targetSDF
--- :html matshow target
-
 
 ' ### Build the OctreeSDF
 
--- parameters
 Hidden_t = Fin 128
 In_t = {leftout: Position_t | rightout: Feature_t}
 Out_t = Fin 1
 WnB : Type = (In_t=>Hidden_t=>Float & Hidden_t => Float & Hidden_t => Out_t => Float & Out_t=>Float)
--- only support joint decoder mode TODO-1
+-- currently only support joint decoder mode TODO-1
 joint_decoder_mode = True
+
+instance [Arbitrary a] Arbitrary (In_t=>Float)
+    arb = \key.
+        for ind.
+            [keyl, keyr] = splitKey $ ixkey key ind
+            case ind of
+                {| leftout = i  |} -> arb keyl
+                {| rightout = i |} -> arb keyr
 
 ' ##### the Octree part
 
--- linear_interp is a helper funcion of bilinear_interp
-def linear_interp
-        (x1:Float) (x2:Float) 
-        (k1:Float) (k2:Float) 
-        (x:Float) : Float = 
+def linearInterp (x1:Float) (x2:Float) (k1:Float) (k2:Float) (x:Float) : Float = 
     w = (x-x1) / (x2-x1)
-    k1 * (1.-w) + k2 * w
+    k1 * (1.0 - w) + k2 * w
 
--- bilinear_interp is a helper function of spatial_features
-def bilinear_interp
+def bilinearInterp
         (p1:Position) (p2:Position) (p3:Position) (p4:Position)
         (k1:Float) (k2:Float) (k3:Float) (k4:Float)
         (p:Position) : Float = 
@@ -83,37 +88,72 @@ def bilinear_interp
     --  |   p2    p4 
     --  H(dim 0)
     --
-    v1 = linear_interp p1.(0@_) p2.(0@_) k1 k2 p.(0@_)
-    v2 = linear_interp p3.(0@_) p4.(0@_) k3 k4 p.(0@_)
-    v3 = linear_interp p1.(1@_) p3.(1@_) v1 v2 p.(1@_)
-    v3
+    v1 = linearInterp p1.(0@_) p2.(0@_) k1 k2 p.(0@_)
+    v2 = linearInterp p3.(0@_) p4.(0@_) k3 k4 p.(0@_)
+    linearInterp p1.(1@_) p3.(1@_) v1 v2 p.(1@_)
+
+def InputSubTable (edge:LOD) : Type = (Fin edge)=>(Fin edge)=>Float
+
+def InputTable (edge:LOD) : Type = Feature_t => InputSubTable edge
+
+-- ARB
+def getInputTable (edge:LOD): (InputTable edge) = 
+    -- [ feature_sz x edge x edge ] * 0.01
+    scaleVec 0.01 $ arb key
+
+def tableSize (t:n=>m): Int = size n
+
+def boundBy [Ord o] (min:o) (max:o) (x:o) : o = 
+    x' = select (x>max) max x
+    select (x<min) min x'
+
+def queryInputTable (pos:Position) (table: InputSubTable n) : Float = 
+    h = FToI pos.(0@_)
+    w = FToI pos.(1@_)
+    -- pad by boundary
+    edge = tableSize table
+    h' = boundBy 0 (edge-1) h
+    w' = boundBy 0 (edge-1) w
+    table.(h'@_).(w'@_)
 
 -- "FeatureVolume.forward" in OctreeSDF
 -- reimplementing torch.nn.Functional.grid_sample 
-def spatial_features (lod:LOD) (x:Position) : Feature = 
-    -- TODO-2
-    zero
+def spatialFeatures (lod:LOD) (x:Position) : Feature = 
+    edge = lod+1
+    inputTable = getInputTable edge
+    inputPos = reverse for d. IToF lod / 2.0 * (x.d+1.)
+    p1w = floor inputPos.(0@_)
+    p1h = floor inputPos.(1@_)
+    p1 = [p1h, p1w]
+    p2 = [p1h+1., p1w]
+    p3 = [p1h, p1w+1.]
+    p4 = [p1h+1., p1w+1.]
+    for f:Feature_t.
+        k1 = queryInputTable p1 inputTable.f
+        k2 = queryInputTable p2 inputTable.f
+        k3 = queryInputTable p3 inputTable.f
+        k4 = queryInputTable p4 inputTable.f
+        bilinearInterp p1 p2 p3 p4 k1 k2 k3 k4 inputPos
+
+-- assume position normalized between -1 and +1
+test_pos = [-1.0, 1.0]
+%time
+spatialFeatures 2 test_pos
 
 ' output = grid_sample(input, grid) is a function used in the original OctreeSDF <https://www.programmersought.com/article/10374524300/>
 <https://pytorch.org/docs/stable/nn.functional.html#torch.nn.functional.grid_sample> here only the 4D input grid_sample is implemented
 
 ' ##### the neural net part
 
-def maximum2 [Ord o] (xs:n=>o) : o = 
-    fold xs.(0@_) \i curr. max curr xs.i
-
-def softmax2 (x: n=>Float) : n=>Float =
-  m = maximum2 x
-  e =  for i. exp (x.i - m)
-  s = sum e
-  for i. e.i / s
-
-def mlp (v1: In_t=>Float) ((w1,b1,w2,b2): WnB)
-        : Out_t=>Float = 
-    -- two linear layers with relu activation in between
+def mlp (v1: In_t=>Float) ((w1,b1,w2,b2): WnB) : Out_t=>Float = 
     relu = \x.(max x 0.)
     v2 = map relu $ (transpose w1) **. v1 + b1
-    softmax2 $ (transpose w2) **. v2 + b2
+    (transpose w2) **. v2 + b2
+
+def l2losspoint (sdf: Position->Distance) (point:(Height&Width)) : Float = 
+    (i, j) = point
+    pred = plotsdfpoint sdf i j
+    sq $ pred - target.i.j
 
 ' ##### Combine Octree and nn
 
@@ -122,89 +162,43 @@ def concatTable (left: a=>v) (right: b=>v) : ({leftout:a | rightout:b }=>v) =
     {| leftout = i  |} -> left.i
     {| rightout = i |} -> right.i
 
-def OctreeSDF (lod:LOD) (wnb:WnB) (x:Position): Distance = 
+def octreeSDF (lod:LOD) (wnb:WnB) (x:Position): Distance = 
     z:Feature = yieldState zero \z_ref.
-            for i:(Fin lod).
-                lod = ordinal i
-                z_cur = get z_ref
-                z_ref := z_cur + spatial_features lod x
+        for i:(Fin lod).
+            lod = ordinal i
+            z_cur = get z_ref
+            z_ref := z_cur + spatialFeatures lod x
     input = concatTable x z
     out = mlp input wnb
     out.(0@_)
 
 ' ### Training
 
-instance [Arbitrary a] Arbitrary (In_t=>Float)
-    arb = \key.
-        for ind.
-            [keyl, keyr] = splitKey $ ixkey key ind
-            case ind of
-                {| leftout = i  |} -> arb keyl
-                {| rightout = i |} -> arb keyr
-
-def l2losspoint (wnb: WnB) (lod: LOD) (point:(Height&Width)) : Float = 
-    (i, j) = point
-    curr_sdf = \x. (OctreeSDF lod wnb x)
-    pred = plotsdfpoint curr_sdf i j
-    sq $ pred - target.i.j
-
-def l2loss (wnb: WnB) (lod: LOD) : Float = 
-    pred = plotsdf \x.(OctreeSDF lod wnb x)
-    diff2 = for i j. sq $ target.i.j-pred.i.j 
-    sumofsq = sum $ for i. sum diff2.i
-    n = (size Height) * (size Width)
-    sumofsq / IToF n
-
-instance [Add a, Add b] Add (a & b)
-  add = \(a, b) (c, d). ( (a + c), (b + d))
-  sub = \(a, b) (c, d). ( (a - c), (b - d))
-  zero = (zero, zero)
-
-instance [VSpace a, VSpace b] VSpace (a & b)
-  scaleVec = \ s (a, b) . (scaleVec s a, scaleVec s b)
-
 -- training parameters
 lod : LOD = 1
 lr : Float = 0.01
 iters : Int = 10000
+minibatch_sz : Int = 5
+catch do assert $ (size Height) * (size Width) > minibatch_sz
 
-sz_sgd : Int = 5
-catch do assert $ (size Height) * (size Width) > sz_sgd
-
-wnbout:WnB = yieldState (arb key) \wnb_ref.
-    for i:(Fin iters).
-        wnb = get wnb_ref
-        loss = \w. (l2loss w lod)
-        gradient = (grad loss) wnb
-        wnb_ref := wnb - scaleVec lr gradient
-
-'wnbout_sgd:WnB = yieldState (arb key) \wnb_ref.
+%time
+wnb_sgd:WnB = yieldState (arb key) \wnb_ref.
     for i:(Fin iters).
         keyi = ixkey key i
         wnb = get wnb_ref
-        samples = for k : (Fin sz_sgd).
+        samples = for k : (Fin minibatch_sz).
             [keyx, keyy] = splitKey $ ixkey keyi k
             (arb keyx, arb keyy)
         loss = \w.
-            pointlosswrap = \point. (l2losspoint w lod point)
+            curr_sdf = \x. (octreeSDF lod w x)
+            pointlosswrap = \point. (l2losspoint curr_sdf point)
             mean $ for k. pointlosswrap samples.k
         gradient = (grad loss) wnb
         wnb_ref := wnb - scaleVec lr gradient
 
 :html matshow target
 
-wnbinit:WnB = arb key
-im1 = plotsdf \x. (OctreeSDF lod wnbinit x)
-:html matshow im1
+im = plotsdf \x. octreeSDF lod wnb_sgd x
+:html matshow im
 
-im2 = plotsdf \x. OctreeSDF lod wnbout x
-:html matshow im2
-
--- im3 = plotsdf \x. OctreeSDF lod wnbout_sgd x
--- :html matshow im3
-
-:p target
-:p im1
-:p im2
-
--- TODO-3 raymarch to render
+-- TODO-2 raymarch to render SDF
