@@ -5,8 +5,8 @@
 import plot
 key = newKey 0
 
-Height = Fin 100
-Width = Fin 100
+Height = Fin 10
+Width = Fin 10
 Position_t = Fin 2
 Feature_t = Fin 3
 Position = Position_t => Float
@@ -22,36 +22,34 @@ instance [Add a, Add b] Add (a & b)
 instance [VSpace a, VSpace b] VSpace (a & b)
   scaleVec = \ s (a, b) . (scaleVec s a, scaleVec s b)
 
-def plotsdfpoint (sdf:(Position -> Distance)) (x:Height) (y:Width) : Distance = 
-    center = IToF (size Height)/2.
-    l = ((IToF ((ordinal y)) - center) / IToF (size Height))
-    v = ((IToF ((ordinal x)) - center) / IToF (size Width))
-    sdf [l, v]
+def ind2NormalizedPos (idx: Fin n) : Float = 
+    2.*(IToF $ ordinal idx) / (IToF n - 1.) - 1.
 
-def plotsdf (sdf:(Position -> Distance)) : Height=>Width=>Distance = 
-    for x y.
-        plotsdfpoint sdf x y
+:p for i:(Fin 11). ind2NormalizedPos i
+
+-- SDF should only accept normalized position [-1., 1.]
+-- TODO-5 enforce this with type system. 
+
+def plotSdfPoint (sdf:(Position -> Distance)) (x:Fin n) (y:Fin m) : Distance = 
+    x' = ind2NormalizedPos x
+    y' = ind2NormalizedPos y
+    sdf [x', y']
+
+def plotSdf (sdf:(Position -> Distance)) : (Fin n)=>(Fin m)=>Distance = 
+    for x y. plotSdfPoint sdf x y
 
 ' ### Construct a target 2D SDF
 
-def circlesdf (p:Position) (r:Float):Distance = 
+def circleSdf (p:Position) (r:Float) : Distance = 
     dist = sqrt $ sum $ for d. (sq p.d)
     max dist r
 
-def squaresdf (p:Position) (center:Position) (halfedge:Float):Distance = 
-    is_in_square_arr = for d. halfedge > abs (p.d-center.d)
-    if (all is_in_square_arr) then 0. else 1.
+def targetSdf (p:Position) : Distance = 
+    circleSdf p 0.1
 
-def targetSDF (p:Position):Distance = 
-    r1 = 0.05
-    r2 = 0.10
-    offset2 : Position = [0.20, 0.05]
-    d1 = circlesdf p r1
-    d3 = squaresdf p offset2 r2
-    -- min d1 d3
-    d3
+target : Height=>Width=>Float = plotSdf targetSdf
 
-target = plotsdf targetSDF
+:html matshow target
 
 ' ### Build the OctreeSDF
 
@@ -72,73 +70,78 @@ instance [Arbitrary a] Arbitrary (In_t=>Float)
 
 ' ##### the Octree part
 
-def linearInterp (x1:Float) (x2:Float) (k1:Float) (k2:Float) (x:Float) : Float = 
+def linearInterp [VSpace a] (x1:Float) (x2:Float) (k1:a) (k2:a) (x:Float) : a = 
+    --     x1   x       x2
+    -- ----------------------->
+    --     k1   ?       k2
     w = (x-x1) / (x2-x1)
-    k1 * (1.0 - w) + k2 * w
+    scaleVec (1.0 - w) k1 + scaleVec w k2
 
-def bilinearInterp
+def bilinearInterp [VSpace a]
         (p1:Position) (p2:Position) (p3:Position) (p4:Position)
-        (k1:Float) (k2:Float) (k3:Float) (k4:Float)
-        (p:Position) : Float = 
-    -- assume the following geometric arrangement
-    --
-    --  0------------W (dim 1)
+        (k1:a) (k2:a) (k3:a) (k4:a)
+        (p:Position) : a = 
+    --  
+    --  p1, p2, p4, p3 form a square
+    --  0------------(dim 1)
     --  |   p1    p3
     --  |      p
     --  |   p2    p4 
-    --  H(dim 0)
+    --  (dim 0)
     --
-    v1 = linearInterp p1.(0@_) p2.(0@_) k1 k2 p.(0@_)
-    v2 = linearInterp p3.(0@_) p4.(0@_) k3 k4 p.(0@_)
-    linearInterp p1.(1@_) p3.(1@_) v1 v2 p.(1@_)
+    k5 = linearInterp p1.(0@_) p2.(0@_) k1 k2 p.(0@_)
+    k6 = linearInterp p3.(0@_) p4.(0@_) k3 k4 p.(0@_)
+    linearInterp p1.(1@_) p3.(1@_) k5 k6 p.(1@_)
 
-def InputSubTable (edge:LOD) : Type = (Fin edge)=>(Fin edge)=>Float
-
-def InputTable (edge:LOD) : Type = Feature_t => InputSubTable edge
-
--- ARB
-def getInputTable (edge:LOD): (InputTable edge) = 
-    -- [ feature_sz x edge x edge ] * 0.01
-    scaleVec 0.01 $ arb key
-
-def tableSize (t:n=>m): Int = size n
+def InputTable (edgeLen:Int) (a:Type): Type = 
+    (Fin edgeLen) => (Fin edgeLen) => a
 
 def boundBy [Ord o] (min:o) (max:o) (x:o) : o = 
     x' = select (x>max) max x
     select (x<min) min x'
 
-def queryInputTable (pos:Position) (table: InputSubTable n) : Float = 
-    h = FToI pos.(0@_)
-    w = FToI pos.(1@_)
-    -- pad by boundary
-    edge = tableSize table
-    h' = boundBy 0 (edge-1) h
-    w' = boundBy 0 (edge-1) w
+def queryInputTable ([h, w]:Position)
+    (table: InputTable edgeLen a) : a = 
+    w' = boundBy 0 (edgeLen-1) (FToI w)
+    h' = boundBy 0 (edgeLen-1) (FToI h)
     table.(h'@_).(w'@_)
+
+def normalizedPos2Ind (normalizedPos:Float) (sz:Int) : Float = 
+    -- -1.0------------>+1.0
+    -- 0.0 ------------>sz-1
+    (normalizedPos + 1.0) / 2.0 * (IToF (sz-1))
+
+def getInputTable [Arbitrary a]: InputTable edgeLen a = arb key
+
+def intpow2 (power:Int) : Int = %shl 1 power
 
 -- "FeatureVolume.forward" in OctreeSDF
 -- reimplementing torch.nn.Functional.grid_sample 
-def spatialFeatures (edge:Int) (x:Position) : Feature = 
-    edge1 = edge+1
-    inputTable = getInputTable edge1
-    inputPos = reverse for d. IToF edge / 2.0 * (x.d+1.)
-    p1w = floor inputPos.(0@_)
-    p1h = floor inputPos.(1@_)
+def spatialFeatures (lod:LOD) (normalizedPos:Position) : Feature = 
+    edgeLen = intpow2 lod
+    inputTable' : InputTable edgeLen Feature = getInputTable
+    inputTable = inputTable'
+    inputPos = for d. normalizedPos2Ind normalizedPos.d edgeLen
+    p1h = floor inputPos.(0@_)
+    p1w = floor inputPos.(1@_)
     p1 = [p1h, p1w]
     p2 = [p1h+1., p1w]
     p3 = [p1h, p1w+1.]
     p4 = [p1h+1., p1w+1.]
-    for f:Feature_t.
-        k1 = queryInputTable p1 inputTable.f
-        k2 = queryInputTable p2 inputTable.f
-        k3 = queryInputTable p3 inputTable.f
-        k4 = queryInputTable p4 inputTable.f
-        bilinearInterp p1 p2 p3 p4 k1 k2 k3 k4 inputPos
+    k1 = queryInputTable p1 inputTable
+    k2 = queryInputTable p2 inputTable
+    k3 = queryInputTable p3 inputTable
+    k4 = queryInputTable p4 inputTable
+    bilinearInterp p1 p2 p3 p4 k1 k2 k3 k4 inputPos
 
--- assume position normalized between -1 and +1
-test_pos = [-1.0, 1.0]
+-- should be continuous
 %time
-spatialFeatures 2 test_pos
+test_im : Height => Width => Color = for x y.
+    x' = ind2NormalizedPos x
+    y' = ind2NormalizedPos y
+    spatialFeatures 3 [x', y']
+
+:html imshow test_im
 
 ' output = grid_sample(input, grid) is a function used in the original OctreeSDF <https://www.programmersought.com/article/10374524300/>
 <https://pytorch.org/docs/stable/nn.functional.html#torch.nn.functional.grid_sample> here only the 4D input grid_sample is implemented
@@ -152,11 +155,11 @@ def mlp (v1: In_t=>Float) ((w1,b1,w2,b2): WnB) : Out_t=>Float =
 
 def l2losspoint (sdf: Position->Distance) (point:(Height&Width)) : Float = 
     (i, j) = point
-    pred = plotsdfpoint sdf i j
+    pred = plotSdfPoint sdf i j
     sq $ pred - target.i.j
 
 def l2loss (sdf: Position->Distance) (target: Height=>Width=>Float) : Float = 
-    pred = plotsdf sdf
+    pred = plotSdf sdf
     diff2 = sq (pred-target)
     sum for i. sum diff2.i
 
@@ -169,23 +172,23 @@ def concatTable (left: a=>v) (right: b=>v) : ({leftout:a | rightout:b }=>v) =
 
 def octreeSDF (lod:LOD) (wnb:WnB) (x:Position): Distance = 
     z:Feature = yieldState zero \z_ref.
+        -- yieldAccum TODO-4
         for i:(Fin lod).
-            -- Is this really right? TODO-3 
-            edge = FToI $ pow 2. $ IToF $ ordinal i
-            -- edge = ordinal i
             z_cur = get z_ref
-            z_ref := z_cur + spatialFeatures edge x
+            z_ref := z_cur + spatialFeatures lod x
     input = concatTable x z
     out = mlp input wnb
     out.(0@_)
 
 ' ### Training
 
-lod : LOD = 3
+lod : LOD = 2
 lr : Float = 0.01
-iters : Int = 20000
+iters : Int = 10
 minibatch_sz : Int = 5
-catch do assert $ (size Height) * (size Width) > minibatch_sz
+
+(size Height) * (size Width) > minibatch_sz
+> True
 
 %time
 wnb_sgd:WnB = yieldState (arb key) \wnb_ref.
@@ -193,8 +196,7 @@ wnb_sgd:WnB = yieldState (arb key) \wnb_ref.
         keyi = ixkey key i
         wnb = get wnb_ref
         samples = for k : (Fin minibatch_sz).
-            [keyx, keyy] = splitKey $ ixkey keyi k
-            (arb keyx, arb keyy)
+            arb $ ixkey keyi k
         loss = \w.
             curr_sdf = \x. (octreeSDF lod w x)
             pointlosswrap = \point. (l2losspoint curr_sdf point)
@@ -208,7 +210,8 @@ final_loss = l2loss final_sdf target
 
 :html matshow target
 
-im = plotsdf final_sdf
+im : Height=>Width=>Float = plotSdf final_sdf
+
 :html matshow im
 
 -- TODO-2 raymarch to render SDF
