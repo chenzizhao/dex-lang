@@ -122,10 +122,9 @@ def intpow2 (power:Int) : Int = %shl 1 power
 
 -- "FeatureVolume.forward" in OctreeSDF
 -- reimplementing torch.nn.Functional.grid_sample 
-def spatialFeatures (lod:LOD) (normalizedPos:Position) : Feature = 
-    edgeLen = intpow2 lod
-    inputTable' : InputTable edgeLen Feature = getInputTable
-    inputTable = badname inputTable'
+def spatialFeatures 
+        (inputTable:InputTable edgeLen Feature)
+        (normalizedPos:Position) : Feature = 
     inputPos = for d. normalizedPos2Ind normalizedPos.d edgeLen
     p1h = floor inputPos.(0@_)
     p1w = floor inputPos.(1@_)
@@ -139,13 +138,20 @@ def spatialFeatures (lod:LOD) (normalizedPos:Position) : Feature =
     k4 = queryInputTable p4 inputTable
     bilinearInterp p1 p2 p3 p4 k1 k2 k3 k4 inputPos
 
--- should be continuous
+inputTable4 : InputTable 16 Feature = badname $ getInputTable
+
+edgeLenTest = intpow2 4
+inputTableTest : InputTable edgeLenTest Feature = badname $ getInputTable
+:t inputTableTest
+:t inputTable4
+
 %time
 test_im : (Fin 10) => (Fin 10) => Color = for x y.
     x' = ind2NormalizedPos x
     y' = ind2NormalizedPos y
-    spatialFeatures 4 [x', y']
+    spatialFeatures inputTable4 [x', y']
 
+-- should be continuous
 :html imshow test_im
 :p head test_im
 
@@ -176,27 +182,30 @@ def concatTable (left: a=>v) (right: b=>v) : ({leftout:a | rightout:b }=>v) =
     {| leftout = i  |} -> left.i
     {| rightout = i |} -> right.i
 
-def octreeSDF (lod:LOD) (wnb:WnB) (x:Position): Distance = 
+def octreeSDF 
+    (inputTable:InputTable edgeLen Feature) 
+    (wnb:WnB) (x:Position): Distance = 
     -- z:Feature = yieldState zero \z_ref.
         -- yieldAccum TODO-4
     --    for i:(Fin lod).
     --        z_cur = get z_ref
     --        z_ref := z_cur + spatialFeatures lod x
-    -- TODO
-    z : Feature = spatialFeatures lod x
+    z : Feature = spatialFeatures inputTable x
     input = concatTable x z
     out = mlp input wnb
     out.(0@_)
 
 ' ### Training
 
-lod : LOD = 6
 lr : Float = 0.01
 iters : Int = 10000
 minibatch_sz : Int = 5
-
 (size Height) * (size Width) > minibatch_sz
 > True
+
+-- lod : LOD = 10
+%time
+inputTable : InputTable 1024 Feature = badname $ getInputTable
 
 %time
 wnb_sgd:WnB = yieldState (arb key) \wnb_ref.
@@ -206,13 +215,13 @@ wnb_sgd:WnB = yieldState (arb key) \wnb_ref.
         samples = for k : (Fin minibatch_sz).
             arb $ ixkey keyi k
         loss = \w.
-            curr_sdf = \x. (octreeSDF lod w x)
+            curr_sdf = \x. (octreeSDF inputTable w x)
             pointlosswrap = \point. (l2losspoint curr_sdf point)
             mean $ for k. pointlosswrap samples.k
         gradient = (grad loss) wnb
         wnb_ref := wnb - scaleVec lr gradient
 
-final_sdf = \x. octreeSDF lod wnb_sgd x
+final_sdf = \x. octreeSDF inputTable wnb_sgd x
 final_loss = l2loss final_sdf
 :p final_loss
 
