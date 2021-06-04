@@ -5,8 +5,8 @@
 import plot
 key = newKey 0
 
-Height = Fin 10
-Width = Fin 10
+Height = Fin 100
+Width = Fin 100
 Position_t = Fin 2
 Feature_t = Fin 3
 Position = Position_t => Float
@@ -113,6 +113,11 @@ def normalizedPos2Ind (normalizedPos:Float) (sz:Int) : Float =
 
 def getInputTable [Arbitrary a]: InputTable edgeLen a = arb key
 
+def badname(x:n=>m=>o=>Float) : n=>m=>o=>Float =
+    for i j k.
+        y = x.i.j.k
+        2.0 * (y- floor y - 0.5)
+
 def intpow2 (power:Int) : Int = %shl 1 power
 
 -- "FeatureVolume.forward" in OctreeSDF
@@ -120,7 +125,7 @@ def intpow2 (power:Int) : Int = %shl 1 power
 def spatialFeatures (lod:LOD) (normalizedPos:Position) : Feature = 
     edgeLen = intpow2 lod
     inputTable' : InputTable edgeLen Feature = getInputTable
-    inputTable = inputTable'
+    inputTable = badname inputTable'
     inputPos = for d. normalizedPos2Ind normalizedPos.d edgeLen
     p1h = floor inputPos.(0@_)
     p1w = floor inputPos.(1@_)
@@ -136,12 +141,13 @@ def spatialFeatures (lod:LOD) (normalizedPos:Position) : Feature =
 
 -- should be continuous
 %time
-test_im : Height => Width => Color = for x y.
+test_im : (Fin 10) => (Fin 10) => Color = for x y.
     x' = ind2NormalizedPos x
     y' = ind2NormalizedPos y
-    spatialFeatures 3 [x', y']
+    spatialFeatures 4 [x', y']
 
 :html imshow test_im
+:p head test_im
 
 ' output = grid_sample(input, grid) is a function used in the original OctreeSDF <https://www.programmersought.com/article/10374524300/>
 <https://pytorch.org/docs/stable/nn.functional.html#torch.nn.functional.grid_sample> here only the 4D input grid_sample is implemented
@@ -158,10 +164,10 @@ def l2losspoint (sdf: Position->Distance) (point:(Height&Width)) : Float =
     pred = plotSdfPoint sdf i j
     sq $ pred - target.i.j
 
-def l2loss (sdf: Position->Distance) (target: Height=>Width=>Float) : Float = 
+def l2loss (sdf: Position->Distance) : Float = 
     pred = plotSdf sdf
     diff2 = sq (pred-target)
-    sum for i. sum diff2.i
+    mean for i. mean diff2.i
 
 ' ##### Combine Octree and nn
 
@@ -171,20 +177,22 @@ def concatTable (left: a=>v) (right: b=>v) : ({leftout:a | rightout:b }=>v) =
     {| rightout = i |} -> right.i
 
 def octreeSDF (lod:LOD) (wnb:WnB) (x:Position): Distance = 
-    z:Feature = yieldState zero \z_ref.
+    -- z:Feature = yieldState zero \z_ref.
         -- yieldAccum TODO-4
-        for i:(Fin lod).
-            z_cur = get z_ref
-            z_ref := z_cur + spatialFeatures lod x
+    --    for i:(Fin lod).
+    --        z_cur = get z_ref
+    --        z_ref := z_cur + spatialFeatures lod x
+    -- TODO
+    z : Feature = spatialFeatures lod x
     input = concatTable x z
     out = mlp input wnb
     out.(0@_)
 
 ' ### Training
 
-lod : LOD = 2
+lod : LOD = 6
 lr : Float = 0.01
-iters : Int = 10
+iters : Int = 10000
 minibatch_sz : Int = 5
 
 (size Height) * (size Width) > minibatch_sz
@@ -205,7 +213,7 @@ wnb_sgd:WnB = yieldState (arb key) \wnb_ref.
         wnb_ref := wnb - scaleVec lr gradient
 
 final_sdf = \x. octreeSDF lod wnb_sgd x
-final_loss = l2loss final_sdf target
+final_loss = l2loss final_sdf
 :p final_loss
 
 :html matshow target
