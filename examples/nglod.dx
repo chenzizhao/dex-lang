@@ -1,6 +1,5 @@
 ' ## Reimplement NGLOD - OctreeSDF
 <https://github.com/nv-tlabs/nglod/blob/main/sdf-net/lib/models/OctreeSDF.py>
-2D only
 
 import plot
 key = newKey 0
@@ -12,23 +11,23 @@ Feature_t = Fin 3
 Position = Position_t => Float
 Feature = Feature_t => Float
 Distance = Float
-LOD = Int
 
 instance [Add a, Add b] Add (a & b)
-  add = \(a, b) (c, d). ( (a + c), (b + d))
-  sub = \(a, b) (c, d). ( (a - c), (b - d))
-  zero = (zero, zero)
+    add = \(a, b) (c, d). ( (a + c), (b + d))
+    sub = \(a, b) (c, d). ( (a - c), (b - d))
+    zero = (zero, zero)
 
 instance [VSpace a, VSpace b] VSpace (a & b)
-  scaleVec = \ s (a, b) . (scaleVec s a, scaleVec s b)
+    scaleVec = \ s (a, b) . (scaleVec s a, scaleVec s b)
 
 def ind2NormalizedPos (idx: Fin n) : Float = 
+    -- requirement n>=2
     2.*(IToF $ ordinal idx) / (IToF n - 1.) - 1.
 
 :p for i:(Fin 11). ind2NormalizedPos i
 
 -- SDF should only accept normalized position [-1., 1.]
--- TODO-5 enforce this with type system. 
+-- TODO-5 enforce this with type system.
 
 def plotSdfPoint (sdf:(Position -> Distance)) (x:Fin n) (y:Fin m) : Distance = 
     x' = ind2NormalizedPos x
@@ -92,6 +91,9 @@ def bilinearInterp [VSpace a]
     k5 = linearInterp p1.(0@_) p2.(0@_) k1 k2 p.(0@_)
     k6 = linearInterp p3.(0@_) p4.(0@_) k3 k4 p.(0@_)
     linearInterp p1.(1@_) p3.(1@_) k5 k6 p.(1@_)
+
+-- def trilinearInterp [VSpace a]
+
 
 def InputTable (edgeLen:Int) (a:Type): Type = 
     (Fin edgeLen) => (Fin edgeLen) => a
@@ -165,7 +167,7 @@ def mlp (v1: In_t=>Float) ((w1,b1,w2,b2): WnB) : Out_t=>Float =
     v2 = map relu $ (transpose w1) **. v1 + b1
     (transpose w2) **. v2 + b2
 
-def l2losspoint (sdf: Position->Distance) (point:(Height&Width)) : Float = 
+def l2losspoint (sdf: Position->Distance) (point: (Height&Width)) : Float = 
     (i, j) = point
     pred = plotSdfPoint sdf i j
     sq $ pred - target.i.j
@@ -183,8 +185,8 @@ def concatTable (left: a=>v) (right: b=>v) : ({leftout:a | rightout:b }=>v) =
     {| rightout = i |} -> right.i
 
 def octreeSDF 
-    (inputTable:InputTable edgeLen Feature) 
-    (wnb:WnB) (x:Position): Distance = 
+    (inputTable: InputTable edgeLen Feature) 
+    (wnb: WnB) (x: Position) : Distance = 
     -- z:Feature = yieldState zero \z_ref.
         -- yieldAccum TODO-4
     --    for i:(Fin lod).
@@ -200,24 +202,20 @@ def octreeSDF
 lr : Float = 0.01
 iters : Int = 10000
 minibatch_sz : Int = 5
-(size Height) * (size Width) > minibatch_sz
-> True
 
--- lod : LOD = 10
+-- edgeLen = 2^lod = 2^7 = 128
 %time
-inputTable : InputTable 1024 Feature = badname $ getInputTable
+inputTable : InputTable 128 Feature = badname $ getInputTable
 
 %time
 wnb_sgd:WnB = yieldState (arb key) \wnb_ref.
     for i:(Fin iters).
         keyi = ixkey key i
         wnb = get wnb_ref
-        samples = for k : (Fin minibatch_sz).
-            arb $ ixkey keyi k
+        samples = for k:(Fin minibatch_sz). arb $ ixkey keyi k
         loss = \w.
-            curr_sdf = \x. (octreeSDF inputTable w x)
-            pointlosswrap = \point. (l2losspoint curr_sdf point)
-            mean $ for k. pointlosswrap samples.k
+            curr_sdf = \x. octreeSDF inputTable w x
+            mean $ for k. l2losspoint curr_sdf samples.k
         gradient = (grad loss) wnb
         wnb_ref := wnb - scaleVec lr gradient
 
