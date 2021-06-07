@@ -4,9 +4,9 @@
 import plot
 key = newKey 0
 
+Depth = Fin 100
 Height = Fin 100
 Width = Fin 100
-Depth = Fin 100
 Position_t = Fin 3
 Feature_t = Fin 3
 Position = Position_t => Float
@@ -52,13 +52,15 @@ def circleSdf (p:Position) (r:Float) : Distance =
 def targetSdf (p:Position) : Distance =
     circleSdf p 0.1
 
-target : Height=>Width=>Depth=>Float = plotSdf targetSdf
 
-target0 = for i j. target.i.j.(0@_)
-:html matshow target0
+def sliceVolume (ai:a) (vol:a=>b=>c=>d) : b=>c=>d = 
+    vol.ai
 
-target5 = for i j. target.i.j.(5@_)
-:html matshow target5
+target : Depth=>Height=>Width=>Float = plotSdf targetSdf
+
+:html matshow $ sliceVolume (0@Depth) target
+
+:html matshow $ sliceVolume (5@Depth) target
 
 ' ### Build the OctreeSDF
 
@@ -79,6 +81,8 @@ instance [Arbitrary a] Arbitrary (In_t=>Float)
 
 ' ##### the Octree part
 
+def Vec (n:Int) : Type = (Fin n)=>Float
+
 def linearInterp [VSpace a] (x1:Float) (x2:Float) (k1:a) (k2:a) (x:Float) : a =
     --     x1   x       x2
     -- ----------------------->
@@ -87,9 +91,9 @@ def linearInterp [VSpace a] (x1:Float) (x2:Float) (k1:a) (k2:a) (x:Float) : a =
     scaleVec (1.0 - w) k1 + scaleVec w k2
 
 def bilinearInterp [VSpace a]
-        (p1:Position) (p2:Position) (p3:Position) (p4:Position)
-        (k1:a) (k2:a) (k3:a) (k4:a)
-        (p:Position) : a =
+	(p1:Vec 2) (p2:Vec 2) (p3:Vec 2) (p4:Vec 2)
+	(k1:a) (k2:a) (k3:a) (k4:a)
+	(p:Vec 2) : a =
     --
     --  p1, p2, p4, p3 form a square
     --  0------------(dim 1)
@@ -102,21 +106,40 @@ def bilinearInterp [VSpace a]
     k6 = linearInterp p3.(0@_) p4.(0@_) k3 k4 p.(0@_)
     linearInterp p1.(1@_) p3.(1@_) k5 k6 p.(1@_)
 
--- def trilinearInterp [VSpace a]
+def trilinearInterp [VSpace a]
+	(p1:Vec 3) (p2:Vec 3) (p3:Vec 3) (p4:Vec 3)
+	(p5:Vec 3) (p6:Vec 3) (p7:Vec 3) (p8:Vec 3)
+	(k1:a) (k2:a) (k3:a) (k4:a)
+	(k5:a) (k6:a) (k7:a) (k8:a)
+	(p:Vec 3) : a =
+    -- n@(dim 0)   0------------(dim 2)
+    --             |   p1    p3
+    --             |      p
+    --             |   p2    p4
+    --             (dim 1)
+    -- n+1@(dim 0) 0------------(dim 2)
+    --             |   p5    p7
+    --             |      p
+    --             |   p6    p8
+    --             (dim 1)
+    dropHead : Vec 3 -> Vec 2 = \v3. [v3.(1@_), v3.(2@_)]
+    k9  = bilinearInterp (dropHead p1) (dropHead p2) (dropHead p3) (dropHead p4) k1 k2 k3 k4 (dropHead p)
+    k10 = bilinearInterp (dropHead p5) (dropHead p6) (dropHead p7) (dropHead p8) k5 k6 k7 k8 (dropHead p)
+    linearInterp p1.(0@_) p5.(0@_) k9 k10 p.(0@_)
 
 
 def InputTable (edgeLen:Int) (a:Type): Type =
-    (Fin edgeLen) => (Fin edgeLen) => a
+    (Fin edgeLen) => (Fin edgeLen) => (Fin edgeLen) => a
 
 def boundBy [Ord o] (min:o) (max:o) (x:o) : o =
     x' = select (x>max) max x
     select (x<min) min x'
 
-def queryInputTable ([h, w]:Position)
-    (table: InputTable edgeLen a) : a =
-    w' = boundBy 0 (edgeLen-1) (FToI w)
+def queryInputTable (table: InputTable edgeLen a) ([d, h, w]:Position) : a =
+    d' = boundBy 0 (edgeLen-1) (FToI d)
     h' = boundBy 0 (edgeLen-1) (FToI h)
-    table.(h'@_).(w'@_)
+    w' = boundBy 0 (edgeLen-1) (FToI w)
+    table.(d'@_).(h'@_).(w'@_)
 
 def normalizedPos2Ind (normalizedPos:Float) (sz:Int) : Float =
     -- -1.0------------>+1.0
@@ -125,9 +148,10 @@ def normalizedPos2Ind (normalizedPos:Float) (sz:Int) : Float =
 
 def getInputTable [Arbitrary a]: InputTable edgeLen a = arb key
 
-def badname(x:n=>m=>o=>Float) : n=>m=>o=>Float =
-    for i j k.
-        y = x.i.j.k
+-- TODO
+def badname(x:n=>m=>o=>p=>Float) : n=>m=>o=>p=>Float =
+    for i j k l.
+        y = x.i.j.k.l
         2.0 * (y- floor y - 0.5)
 
 def intpow2 (power:Int) : Int = %shl 1 power
@@ -138,17 +162,17 @@ def spatialFeatures
         (inputTable:InputTable edgeLen Feature)
         (normalizedPos:Position) : Feature =
     inputPos = for d. normalizedPos2Ind normalizedPos.d edgeLen
-    p1h = floor inputPos.(0@_)
-    p1w = floor inputPos.(1@_)
-    p1 = [p1h, p1w]
-    p2 = [p1h+1., p1w]
-    p3 = [p1h, p1w+1.]
-    p4 = [p1h+1., p1w+1.]
-    k1 = queryInputTable p1 inputTable
-    k2 = queryInputTable p2 inputTable
-    k3 = queryInputTable p3 inputTable
-    k4 = queryInputTable p4 inputTable
-    bilinearInterp p1 p2 p3 p4 k1 k2 k3 k4 inputPos
+    [p1d, p1h, p1w] = map floor inputPos
+    p1 = [p1d, p1h, p1w]
+    p2 = [p1d, p1h+1., p1w]
+    p3 = [p1d, p1h, p1w+1.]
+    p4 = [p1d, p1h+1., p1w+1.]
+    p5 = [p1d+1., p1h, p1w]
+    p6 = [p1d+1., p1h+1., p1w]
+    p7 = [p1d+1., p1h, p1w+1.]
+    p8 = [p1d+1., p1h+1., p1w+1.]
+    [k1, k2, k3, k4, k5, k6, k7, k8] = map (queryInputTable inputTable) [p1, p2, p3, p4, p5, p6, p7, p8]
+    trilinearInterp p1 p2 p3 p4 p5 p6 p7 p8 k1 k2 k3 k4 k5 k6 k7 k8 inputPos
 
 inputTable4 : InputTable 16 Feature = badname $ getInputTable
 
@@ -158,14 +182,14 @@ inputTableTest : InputTable edgeLenTest Feature = badname $ getInputTable
 :t inputTable4
 
 %time
-test_im : (Fin 10) => (Fin 10) => Color = for x y.
+test_im : (Fin 10) => (Fin 10) => (Fin 10) => Color = for x y z.
     x' = ind2NormalizedPos x
     y' = ind2NormalizedPos y
-    spatialFeatures inputTable4 [x', y']
+    z' = ind2NormalizedPos z
+    spatialFeatures inputTable4 [x', y', z']
 
 -- -- should be continuous
--- :html imshow test_im
--- :p head test_im
+:html imshow $ sliceVolume (5@(Fin 10)) test_im
 
 ' output = grid_sample(input, grid) is a function used in the original OctreeSDF <https://www.programmersought.com/article/10374524300/>
 <https://pytorch.org/docs/stable/nn.functional.html#torch.nn.functional.grid_sample> here only the 4D input grid_sample is implemented
@@ -177,15 +201,15 @@ def mlp (v1: In_t=>Float) ((w1,b1,w2,b2): WnB) : Out_t=>Float =
     v2 = map relu $ (transpose w1) **. v1 + b1
     (transpose w2) **. v2 + b2
 
-def l2losspoint (sdf: Position->Distance) (point: (Height&Width)) : Float =
-    (i, j) = point
-    pred = plotSdfPoint sdf i j
-    sq $ pred - target.i.j
+def l2losspoint (sdf: Position->Distance) (point: (Depth&Height&Width)) : Float =
+    (x, y, z) = point
+    pred = plotSdfPoint sdf x y z
+    sq $ pred - target.x.y.z
 
 def l2loss (sdf: Position->Distance) : Float =
     pred = plotSdf sdf
     diff2 = sq (pred-target)
-    mean for i. mean diff2.i
+    mean for i. mean for j. mean diff2.i.j
 
 ' ##### Combine Octree and nn
 
@@ -233,11 +257,10 @@ final_sdf = \x. octreeSDF inputTable wnb_sgd x
 final_loss = l2loss final_sdf
 :p final_loss
 
-:html matshow target
+:html matshow $ sliceVolume (5@Depth) target
 
-im : Height=>Width=>Float = plotSdf final_sdf
-
-:html matshow im
+im : Depth=>Height=>Width=>Float = plotSdf final_sdf
+:html matshow $ sliceVolume (5@Depth) im
 
 -- TODO-2 raymarch to render SDF
 
@@ -258,10 +281,10 @@ def raymarch
         abs $ (grad sdf) (pos + finalraylen .* dir)
 -- not sure how `abs` works e.g. [(-1), (-2), (-3)] > zero
 
-im2:Height=>Width=>Color = for x y.
-	l = ind2NormalizedPos x
-	v = ind2NormalizedPos y
-	raymarch [l*10., v*10., -4.] [0., 0., 1.] final_sdf
+im2:Depth=>Height=>Width=>Color = for x y z.
+    x' = ind2NormalizedPos x
+    y' = ind2NormalizedPos y
+    z' = ind2NormalizedPos z
+    raymarch [x'*10., y'*10., z'*10.] [0., 0., 1.] final_sdf
 
-:html imshow im2
-
+:html imshow $ sliceVolume (5@Depth) im2
