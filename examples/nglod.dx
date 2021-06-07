@@ -6,7 +6,8 @@ key = newKey 0
 
 Height = Fin 100
 Width = Fin 100
-Position_t = Fin 2
+Depth = Fin 100
+Position_t = Fin 3
 Feature_t = Fin 3
 Position = Position_t => Float
 Feature = Feature_t => Float
@@ -29,15 +30,20 @@ def ind2NormalizedPos (idx: Fin n) : Float =
 -- SDF should only accept normalized position [-1., 1.]
 -- TODO-5 enforce this with type system.
 
-def plotSdfPoint (sdf:(Position -> Distance)) (x:Fin n) (y:Fin m) : Distance =
+def plotSdfPoint
+	(sdf:(Position -> Distance))
+	(x:Fin n) (y:Fin m) (z:Fin o): Distance =
     x' = ind2NormalizedPos x
     y' = ind2NormalizedPos y
-    sdf [x', y']
+    z' = ind2NormalizedPos z
+    sdf [x', y', z']
 
-def plotSdf (sdf:(Position -> Distance)) : (Fin n)=>(Fin m)=>Distance =
-    for x y. plotSdfPoint sdf x y
+def plotSdf
+	(sdf:(Position -> Distance))
+	: (Fin n)=>(Fin m)=>(Fin o)=>Distance =
+    for x y z. plotSdfPoint sdf x y z
 
-' ### Construct a target 2D SDF
+' ### Construct a target 3D SDF
 
 def circleSdf (p:Position) (r:Float) : Distance =
     dist = sqrt $ sum $ for d. (sq p.d)
@@ -46,9 +52,13 @@ def circleSdf (p:Position) (r:Float) : Distance =
 def targetSdf (p:Position) : Distance =
     circleSdf p 0.1
 
-target : Height=>Width=>Float = plotSdf targetSdf
+target : Height=>Width=>Depth=>Float = plotSdf targetSdf
 
-:html matshow target
+target0 = for i j. target.i.j.(0@_)
+:html matshow target0
+
+target5 = for i j. target.i.j.(5@_)
+:html matshow target5
 
 ' ### Build the OctreeSDF
 
