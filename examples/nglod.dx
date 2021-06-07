@@ -153,9 +153,9 @@ test_im : (Fin 10) => (Fin 10) => Color = for x y.
     y' = ind2NormalizedPos y
     spatialFeatures inputTable4 [x', y']
 
--- should be continuous
-:html imshow test_im
-:p head test_im
+-- -- should be continuous
+-- :html imshow test_im
+-- :p head test_im
 
 ' output = grid_sample(input, grid) is a function used in the original OctreeSDF <https://www.programmersought.com/article/10374524300/>
 <https://pytorch.org/docs/stable/nn.functional.html#torch.nn.functional.grid_sample> here only the 4D input grid_sample is implemented
@@ -230,3 +230,28 @@ im : Height=>Width=>Float = plotSdf final_sdf
 :html matshow im
 
 -- TODO-2 raymarch to render SDF
+
+' ### Render with raymarching
+
+Direction = Position
+
+def raymarch 
+	(pos:Position) (dir: Direction) 
+	(sdf:Position->Distance) : Color = 
+    finalraylen = yieldState 0.1 \raylen.
+        while \().
+            rayPos = pos + get raylen .* dir
+            d = sdf rayPos
+            raylen := get raylen + d*0.9
+            d > 0.01 && get raylen < 1000.
+    if finalraylen > 1000. then zero else 
+        abs $ (grad sdf) (pos + finalraylen .* dir)
+-- not sure how `abs` works e.g. [(-1), (-2), (-3)] > zero
+
+im2:Height=>Width=>Color = for x y.
+	l = ind2NormalizedPos x
+	v = ind2NormalizedPos y
+	raymarch [l*10., v*10., -4.] [0., 0., 1.] final_sdf
+
+:html imshow im2
+
