@@ -124,10 +124,6 @@ def trilinearInterp [VSpace a]
     k10 = bilinearInterp (dropHead p5) (dropHead p6) (dropHead p7) (dropHead p8) k5 k6 k7 k8 (dropHead p)
     linearInterp p1.(0@_) p5.(0@_) k9 k10 p.(0@_)
 
-
--- def InputTable (edgeLen:Int) (a:Type): Type =
---     (Fin edgeLen) => (Fin edgeLen) => (Fin edgeLen) => a
-
 data InputTable = 
     MkInputTable edgeLen:Int (Fin edgeLen => Fin edgeLen => Fin edgeLen => Feature)
 
