@@ -52,15 +52,11 @@ def circleSdf (p:Position) (r:Float) : Distance =
 def targetSdf (p:Position) : Distance =
     circleSdf p 0.1
 
-
-def sliceVolume (ai:a) (vol:a=>b=>c=>d) : b=>c=>d = 
-    vol.ai
-
 target : Depth=>Height=>Width=>Float = plotSdf targetSdf
 
-:html matshow $ sliceVolume (0@Depth) target
+:html matshow target.(0@Depth)
 
-:html matshow $ sliceVolume (5@Depth) target
+:html matshow target.(5@Depth)
 
 ' ### Build the OctreeSDF
 
@@ -189,7 +185,7 @@ test_im : (Fin 10) => (Fin 10) => (Fin 10) => Color = for x y z.
     spatialFeatures inputTable4 [x', y', z']
 
 -- -- should be continuous
-:html imshow $ sliceVolume (5@(Fin 10)) test_im
+:html imshow test_im.(5@(Fin 10))
 
 ' output = grid_sample(input, grid) is a function used in the original OctreeSDF <https://www.programmersought.com/article/10374524300/>
 <https://pytorch.org/docs/stable/nn.functional.html#torch.nn.functional.grid_sample> here only the 4D input grid_sample is implemented
@@ -257,34 +253,37 @@ final_sdf = \x. octreeSDF inputTable wnb_sgd x
 final_loss = l2loss final_sdf
 :p final_loss
 
-:html matshow $ sliceVolume (5@Depth) target
+:html matshow target.(5@Depth)
 
 im : Depth=>Height=>Width=>Float = plotSdf final_sdf
-:html matshow $ sliceVolume (5@Depth) im
+:html matshow im.(5@Depth)
+
 
 -- TODO-2 raymarch to render SDF
 
-' ### Render with raymarching
-
-Direction = Position
-
-def raymarch 
-	(pos:Position) (dir: Direction) 
-	(sdf:Position->Distance) : Color = 
-    finalraylen = yieldState 0.1 \raylen.
-        while \().
-            rayPos = pos + get raylen .* dir
-            d = sdf rayPos
-            raylen := get raylen + d*0.9
-            d > 0.01 && get raylen < 1000.
-    if finalraylen > 1000. then zero else 
-        abs $ (grad sdf) (pos + finalraylen .* dir)
--- not sure how `abs` works e.g. [(-1), (-2), (-3)] > zero
-
-im2:Depth=>Height=>Width=>Color = for x y z.
-    x' = ind2NormalizedPos x
-    y' = ind2NormalizedPos y
-    z' = ind2NormalizedPos z
-    raymarch [x'*10., y'*10., z'*10.] [0., 0., 1.] final_sdf
-
-:html imshow $ sliceVolume (5@Depth) im2
+-- ' ### Render with raymarching
+-- 
+-- Direction = Position
+-- 
+-- def raymarch 
+-- 	(pos:Position) (dir: Direction) 
+-- 	(sdf:Position->Distance) : Color = 
+--     finalraylen = yieldState 0.1 \raylen.
+--         while \().
+--             rayPos = pos + get raylen .* dir
+--             d = sdf rayPos
+--             raylen := get raylen + d*0.9
+--             d > 0.01 && get raylen < 1000.
+--     if finalraylen > 1000. then zero else 
+--         abs $ (grad sdf) (pos + finalraylen .* dir)
+-- -- not sure how `abs` works e.g. [(-1), (-2), (-3)] > zero
+-- 
+-- im2:Depth=>Height=>Width=>Color = for x y z.
+--     x' = ind2NormalizedPos x
+--     y' = ind2NormalizedPos y
+--     z' = ind2NormalizedPos z
+--     raymarch [x'*10., y'*10., z'*10.] [0., 0., 1.] final_sdf
+-- 
+-- :html imshow $ sliceVolume (5@Depth) im2
+-- 
+-- :p head im2
