@@ -124,14 +124,17 @@ def trilinearInterp [VSpace a]
     linearInterp p1.(0@_) p5.(0@_) k9 k10 p.(0@_)
 
 
-def InputTable (edgeLen:Int) (a:Type): Type =
-    (Fin edgeLen) => (Fin edgeLen) => (Fin edgeLen) => a
+-- def InputTable (edgeLen:Int) (a:Type): Type =
+--     (Fin edgeLen) => (Fin edgeLen) => (Fin edgeLen) => a
+
+data InputTable = 
+    MkInputTable edgeLen:Int (Fin edgeLen => Fin edgeLen => Fin edgeLen => Feature)
 
 def boundBy [Ord o] (min:o) (max:o) (x:o) : o =
     x' = select (x>max) max x
     select (x<min) min x'
 
-def queryInputTable (table: InputTable edgeLen a) ([d, h, w]:Position) : a =
+def queryInputTable ((MkInputTable edgeLen table): InputTable) ([d, h, w]:Position) : Feature =
     d' = boundBy 0 (edgeLen-1) (FToI d)
     h' = boundBy 0 (edgeLen-1) (FToI h)
     w' = boundBy 0 (edgeLen-1) (FToI w)
@@ -142,7 +145,8 @@ def normalizedPos2Ind (normalizedPos:Float) (sz:Int) : Float =
     -- 0.0 ------------>sz-1
     (normalizedPos + 1.0) / 2.0 * (IToF (sz-1))
 
-def getInputTable [Arbitrary a]: InputTable edgeLen a = arb key
+def getInputTable [Arbitrary a]: (Fin edgeLen => Fin edgeLen => Fin edgeLen => a) = 
+    arb key
 
 -- TODO
 def badname(x:n=>m=>o=>p=>Float) : n=>m=>o=>p=>Float =
@@ -155,8 +159,9 @@ def intpow2 (power:Int) : Int = %shl 1 power
 -- "FeatureVolume.forward" in OctreeSDF
 -- reimplementing torch.nn.Functional.grid_sample
 def spatialFeatures
-        (inputTable:InputTable edgeLen Feature)
+        (inputTable:InputTable)
         (normalizedPos:Position) : Feature =
+    (MkInputTable edgeLen table) = inputTable
     inputPos = for d. normalizedPos2Ind normalizedPos.d edgeLen
     [p1d, p1h, p1w] = map floor inputPos
     p1 = [p1d, p1h, p1w]
@@ -170,12 +175,12 @@ def spatialFeatures
     [k1, k2, k3, k4, k5, k6, k7, k8] = map (queryInputTable inputTable) [p1, p2, p3, p4, p5, p6, p7, p8]
     trilinearInterp p1 p2 p3 p4 p5 p6 p7 p8 k1 k2 k3 k4 k5 k6 k7 k8 inputPos
 
-inputTable4 : InputTable 16 Feature = badname $ getInputTable
+inputTable4 = MkInputTable 16 (badname getInputTable)
 
 edgeLenTest = intpow2 4
-inputTableTest : InputTable edgeLenTest Feature = badname $ getInputTable
-:t inputTableTest
+inputTableTest = MkInputTable edgeLenTest (badname getInputTable)
 :t inputTable4
+:t inputTableTest
 
 %time
 test_im : (Fin 10) => (Fin 10) => (Fin 10) => Color = for x y z.
@@ -215,7 +220,7 @@ def concatTable (left: a=>v) (right: b=>v) : ({leftout:a | rightout:b }=>v) =
     {| rightout = i |} -> right.i
 
 def octreeSDF
-    (inputTable: InputTable edgeLen Feature)
+    (inputTable: InputTable)
     (wnb: WnB) (x: Position) : Distance =
     -- z:Feature = yieldState zero \z_ref.
         -- yieldAccum TODO-4
@@ -233,9 +238,10 @@ lr : Float = 0.01
 iters : Int = 10000
 minibatch_sz : Int = 5
 
--- edgeLen = 2^lod = 2^7 = 128
 %time
-inputTable : InputTable 128 Feature = badname $ getInputTable
+edgeLen = intpow2 7
+inputTable = MkInputTable edgeLen (badname getInputTable)
+:t inputTable
 
 %time
 wnb_sgd:WnB = yieldState (arb key) \wnb_ref.
@@ -258,32 +264,11 @@ final_loss = l2loss final_sdf
 im : Depth=>Height=>Width=>Float = plotSdf final_sdf
 :html matshow im.(5@Depth)
 
+-- train weigths for multiple lods
+-- wnb_sgds : (Fin lod_max) => WnB = for i.
+--     edgeLen' = intpow2 $ ordinal i
+--     inputTable' : InputTable edgeLen' Feature = badname $ getInputTable
+--     inputTable'
+
 
 -- TODO-2 raymarch to render SDF
-
--- ' ### Render with raymarching
--- 
--- Direction = Position
--- 
--- def raymarch 
--- 	(pos:Position) (dir: Direction) 
--- 	(sdf:Position->Distance) : Color = 
---     finalraylen = yieldState 0.1 \raylen.
---         while \().
---             rayPos = pos + get raylen .* dir
---             d = sdf rayPos
---             raylen := get raylen + d*0.9
---             d > 0.01 && get raylen < 1000.
---     if finalraylen > 1000. then zero else 
---         abs $ (grad sdf) (pos + finalraylen .* dir)
--- -- not sure how `abs` works e.g. [(-1), (-2), (-3)] > zero
--- 
--- im2:Depth=>Height=>Width=>Color = for x y z.
---     x' = ind2NormalizedPos x
---     y' = ind2NormalizedPos y
---     z' = ind2NormalizedPos z
---     raymarch [x'*10., y'*10., z'*10.] [0., 0., 1.] final_sdf
--- 
--- :html imshow $ sliceVolume (5@Depth) im2
--- 
--- :p head im2
