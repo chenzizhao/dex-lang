@@ -21,6 +21,8 @@ instance [Add a, Add b] Add (a & b)
 instance [VSpace a, VSpace b] VSpace (a & b)
     scaleVec = \ s (a, b) . (scaleVec s a, scaleVec s b)
 
+def length (x: d=>Float) : Float = sqrt $ sum for i. sq x.i
+
 def ind2NormalizedPos (idx: Fin n) : Float =
     -- requirement n>=2
     2.*(IToF $ ordinal idx) / (IToF n - 1.) - 1.
@@ -49,9 +51,16 @@ def circleSdf (p:Position) (r:Float) : Distance =
     dist = sqrt $ sum $ for d. (sq p.d)
     max dist r
 
-def targetSdf (p:Position) : Distance =
-    circleSdf p 0.1
+-- TODO modify the absolute positions ...
 
+def sdSphere (pos:Position) (spherePos:Position) (r:Float) : Distance = 
+  pos' = pos - spherePos
+  max (length pos' - r) 0.0
+
+def targetSdf (p:Position) : Distance =
+    sdSphere p [-0.6, -0.7,  -0.2] 0.3
+
+%time
 target : Depth=>Height=>Width=>Float = plotSdf targetSdf
 
 :html matshow target.(0@Depth)
@@ -235,7 +244,7 @@ lr : Float = 0.01
 iters : Int = 10000
 minibatch_sz : Int = 5
 -- train weigths for multiple lods
-lod_max = 3
+lod_max = 2
 :p for i:(Fin lod_max). ordinal i
 
 %time
@@ -265,8 +274,17 @@ final_losses = for lod.
     l2loss final_sdfs.lod
 :p final_losses
 
-im2 : Depth=>Height=>Width=>Float = plotSdf final_sdfs.(0@_)
+%time
+im2 : Depth=>Height=>Width=>Float = plotSdf final_sdfs.(1@_)
 :html matshow im2.(5@Depth)
 :html matshow target.(5@Depth)
 
--- TODO-2 raymarch to render SDF
+
+' ### Rendering
+- adpative *
+- sphere tracing *
+- uniform light source
+- remove mirror
+- build a target volume of some complexity
+- rotating volume gif (later)
+
