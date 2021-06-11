@@ -64,7 +64,8 @@ Hidden_t = Fin 128
 In_t = {leftout: Position_t | rightout: Feature_t}
 Out_t = Fin 1
 WnB : Type = (In_t=>Hidden_t=>Float & Hidden_t => Float & Hidden_t => Out_t => Float & Out_t=>Float)
--- currently only support joint decoder mode TODO-1
+-- TODO-6 new data type for WnB
+-- currently only support joint decoder mode TODO-1 WIP
 joint_decoder_mode = True
 
 instance [Arbitrary a] Arbitrary (In_t=>Float)
@@ -237,38 +238,39 @@ def octreeSDF
 lr : Float = 0.01
 iters : Int = 10000
 minibatch_sz : Int = 5
-
-%time
-edgeLen = intpow2 7
-inputTable = MkInputTable edgeLen (badname getInputTable)
-:t inputTable
-
-%time
-wnb_sgd:WnB = yieldState (arb key) \wnb_ref.
-    for i:(Fin iters).
-        keyi = ixkey key i
-        wnb = get wnb_ref
-        samples = for k:(Fin minibatch_sz). arb $ ixkey keyi k
-        loss = \w.
-            curr_sdf = \x. octreeSDF inputTable w x
-            mean $ for k. l2losspoint curr_sdf samples.k
-        gradient = (grad loss) wnb
-        wnb_ref := wnb - scaleVec lr gradient
-
-final_sdf = \x. octreeSDF inputTable wnb_sgd x
-final_loss = l2loss final_sdf
-:p final_loss
-
-:html matshow target.(5@Depth)
-
-im : Depth=>Height=>Width=>Float = plotSdf final_sdf
-:html matshow im.(5@Depth)
-
 -- train weigths for multiple lods
--- wnb_sgds : (Fin lod_max) => WnB = for i.
---     edgeLen' = intpow2 $ ordinal i
---     inputTable' : InputTable edgeLen' Feature = badname $ getInputTable
---     inputTable'
+lod_max = 3
+:p for i:(Fin lod_max). ordinal i
 
+%time
+input_tables = for lod: (Fin lod_max). 
+    edgeLen = intpow2 $ ordinal lod
+    MkInputTable edgeLen (badname getInputTable)
+
+%time
+wnb_sgds = for lod.
+    inputTable = input_tables.lod
+    yieldState (arb key) \wnb_ref.
+        for i:(Fin iters).
+            keyi = ixkey key i
+            wnb = get wnb_ref
+            samples = for k:(Fin minibatch_sz). arb $ ixkey keyi k
+            loss = \w.
+                curr_sdf = \x. octreeSDF inputTable w x
+                mean $ for k. l2losspoint curr_sdf samples.k
+            gradient = (grad loss) wnb
+            wnb_ref := wnb - scaleVec lr gradient
+
+%time
+final_sdfs = for lod.
+    \x. octreeSDF input_tables.lod wnb_sgds.lod x
+
+final_losses = for lod. 
+    l2loss final_sdfs.lod
+:p final_losses
+
+im2 : Depth=>Height=>Width=>Float = plotSdf final_sdfs.(0@_)
+:html matshow im2.(5@Depth)
+:html matshow target.(5@Depth)
 
 -- TODO-2 raymarch to render SDF
