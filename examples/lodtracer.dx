@@ -1,0 +1,163 @@
+
+'## General Utilies
+
+def W8ToB' (x : Word8) : Bool = x > (IToW8 0)  -- Bug in prelude
+
+def firstbit  (x:Word8) : Bool = W8ToB' $ x .&. (IToW8 1)
+def secondbit (x:Word8) : Bool = W8ToB' $ x .&. (IToW8 2)
+def thirdbit  (x:Word8) : Bool = W8ToB' $ x .&. (IToW8 4)
+
+-- :p W8ToB (IToW8 4)
+
+def intpow2 (power:Int) : Int = %shl 1 power
+
+
+'## Types
+
+def Vec (n:Int) : Type = Fin n => Float
+
+Position  = Vec 3
+Direction = Vec 3  -- Should be normalized. TODO: use a newtype wrapper
+Distance = Float
+
+Ray = (Position & Direction)
+
+data Axis =
+  X
+  Y
+  Z
+
+--Octants = Directions=>Bool
+Octant = Fin 8 -- (Bool & Bool & Bool)  -- positive in x, y, or z
+
+LoD = Fin 6
+
+--def Voxel (lod:LoD) : Type =
+--  (Fin lod)=>Octants
+
+--def Voxel (numDivisions:Int) : Type =
+--  (Fin numDivisions & Fin numDivisions & Fin numDivisions)
+
+def Voxel : Type =
+  (Int & Int & Int)  -- Sad!
+
+def AABox : Type = (Position & Position)  -- opposite corners
+
+
+'## Bounding box utilities
+
+def voxelToCentrePosition (lod: LoD) (voxel: Voxel) : Position =
+  -- voxels divide up cube in (-1, 1)
+  numDivisions = intpow2 $ ordinal lod
+  divSize = 2.0 / (IToF numDivisions)
+  (xn, yn, zn) = voxel
+  [divSize * (0.5 + IToF xn) - 1.0,
+   divSize * (0.5 + IToF yn) - 1.0,
+   divSize * (0.5 + IToF zn) - 1.0]
+
+def voxeltoBB (voxel: Voxel) (lod:LoD) : AABox =
+  -- voxel divides up cube in (-1, 1)
+  numDivisions = intpow2 $ ordinal lod
+  divSize = 2.0 / (IToF numDivisions)
+  (xn, yn, zn) = voxel
+  lower = [divSize * (IToF xn) - 1.0,
+           divSize * (IToF yn) - 1.0,
+           divSize * (IToF zn) - 1.0]
+  upper = [divSize * (IToF (xn + 1)) - 1.0,
+           divSize * (IToF (yn + 1)) - 1.0,
+           divSize * (IToF (zn + 1)) - 1.0]
+  (lower, upper)
+
+def rayAABBIntersection (ray:Ray) (box:AABox) : Bool =
+  ([pos_x, pos_y, pos_z], [dir_x,  dir_y,  dir_z ]) = ray
+  ([low_x, low_y, low_z], [high_x, high_y, high_z]) = box
+  (tx1, tx2) = ((low_x - pos_x) / dir_x, (high_x - pos_x) / dir_x)
+  (ty1, ty2) = ((low_y - pos_y) / dir_y, (high_y - pos_y) / dir_y)
+  (tz1, tz2) = ((low_z - pos_z) / dir_z, (high_z - pos_z) / dir_z)
+  txn = min tx1 tx2
+  txf = max tx1 tx2
+  tyn = min ty1 ty2
+  tyf = max ty1 ty2
+  tzn = min tz1 tz2
+  tzf = max tz1 tz2
+  tnear = max txn $ max tyn tzn
+  tfar  = min txf $ min tyf tzf
+  tfar > tnear
+
+def intersectsVoxel (lod: LoD) (ray:Ray) (voxel: Voxel) : Bool =
+  box = voxeltoBB voxel lod
+  rayAABBIntersection ray box
+
+
+--def decide (lod: LOD) (ray:Ray) (voxel: Voxel) : (Fin 8)=>Bool =
+  -- Returned voxels are of the next level of detail.
+--  if intersectsVoxel ray voxel then
+--    (True, True, True, True, True, True, True, True)
+--  else
+
+
+'## Octtree intersection
+
+octantBackToFrontTable : Octant=>Octant=>Octant =
+  intTable = [[ 0, 1, 2, 4, 3, 5, 6, 7 ],
+              [ 1, 0, 3, 5, 2, 4, 7, 6 ],
+              [ 2, 0, 3, 6, 1, 4, 7, 5 ],
+              [ 3, 1, 2, 7, 0, 5, 6, 4 ],
+              [ 4, 0, 5, 6, 1, 2, 7, 3 ],
+              [ 5, 1, 4, 7, 0, 3, 6, 2 ],
+              [ 6, 2, 4, 7, 0, 3, 5, 1 ],
+              [ 7, 3, 5, 6, 1, 2, 4, 0 ]]
+  for i j. (intTable.i.j@Octant)
+
+def childOctantToSubVoxel (lod: LoD) (voxel: Voxel) (oct:Octant) : Voxel =
+  oo = IToW8 $ ordinal oct
+  (x, y, z) = voxel
+  (2 * x + (BToI $ firstbit oo),
+   2 * y + (BToI $ secondbit oo),
+   2 * z + (BToI $ thirdbit oo))
+
+def subVoxelPosToChildOctant (lod: LoD) (voxel: Voxel) (pos:Position) : Octant =
+  [mid_x, mid_y, mid_z] = voxelToCentrePosition lod voxel
+  [pos_x, pos_y, pos_z] = pos 
+  bit1 = BToW8 $ pos_x > mid_x
+  bit2 = BToW8 $ pos_y > mid_y
+  bit3 = BToW8 $ pos_z > mid_z
+  bits = W8ToI $ bit1 .|. (bit2 << 1) .|. (bit3 << 2)
+  bits@Octant
+
+def orderedChildren (lod: LoD) (ray:Ray) (voxel: Voxel) : Octant=>Octant =
+  -- todo: return only those children that intersect
+  (pos, dir) = ray
+  oct = subVoxelPosToChildOctant lod voxel pos
+  octantBackToFrontTable oct
+
+def subdivide (ray:Ray) (lod: LoD) ((AsList _ voxels) : List Voxel) : List Voxel =
+  -- Returned voxels are of the next level of detail.
+  -- Todo: Encode this in the types.
+  yieldAccum (ListMonoid Voxel) \list.
+    for t.
+      if intersectsVoxel lod ray voxels.t then
+        childOcts = orderedChildren lod ray voxels.t
+        list += AsList 8 for i:(Fin 8). childOctantToSubVoxel lod voxels.t childOcts.i
+
+def rayTraceOctTree (ray: Ray) : List Voxel =
+  -- Returns a depth-ordered list of voxels intersecting a ray.
+  top_voxel = (0, 0, 0)
+  update = subdivide ray
+  init = AsList 1 [top_voxel]
+  fold init update
+
+
+:p rayTraceOctTree (zero, arb (newKey 0))
+
+
+
+
+
+---- Tests
+
+p = voxelToCentrePosition (2@LoD) (0, 2, 0)
+:p subVoxelPosToChildOctant (1@LoD) (0, 2, 0) p
+
+:p rayAABBIntersection ([0., 0., 0.], [0.1, 0.1, 0.1]) ([-0.1, -0.1, -0.1], [0.1, 0.1, 0.1])
+
