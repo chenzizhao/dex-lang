@@ -42,7 +42,6 @@ def firstbit  (x:Word8) : Bool = W8ToB' $ x .&. (IToW8 1)
 def secondbit (x:Word8) : Bool = W8ToB' $ x .&. (IToW8 2)
 def thirdbit  (x:Word8) : Bool = W8ToB' $ x .&. (IToW8 4)
 
-def last : n = ((size n) - 1)@n
 def ixFraction (i:n) : Float = (IToF (ordinal i)) / (IToF ((size n) - 1))
 
 -- :p for i:(Fin 10). ixFraction i
@@ -62,24 +61,29 @@ Distance = Float
 
 Ray = (Position & Direction)
 
-data Axis =
-  X
-  Y
-  Z
-
 --Octants = Directions=>Bool
 Octant = Fin 8 -- (Bool & Bool & Bool)  -- positive in x, y, or z
 
-LoD = Fin 5
+LoD = Int
+max_lod = 3
 
---def Voxel (lod:LoD) : Type =
+-- def Voxel (lod:LoD) : Type =
 --  (Fin lod)=>Octants
 
---def Voxel (numDivisions:Int) : Type =
+-- czz: why doesn't this work? 
+-- def Voxel (numDivisions:Int) : Type =
 --  (Fin numDivisions & Fin numDivisions & Fin numDivisions)
+-- and only use util functions to access `Voxel` data
+-- alternatively store lod as part of it 
+-- def Voxel : Type = (LoD&Int&Int&Int)
+-- def getLod ((lod, _, _, _):Voxel) : LoD = lod
+-- def getOrdinals ((_, x, y, z):Voxel) : (Int&Int&Int) = (x,y,z)
 
 def Voxel : Type =
   (Int & Int & Int)  -- Sad!
+
+-- czz: helpful to keep track of which lod a voxel belongs to
+-- def Voxel2 : Type = (LoD & Int & Int & Int)
 
 def AABox : Type = (Position & Position)  -- opposite corners
 
@@ -88,7 +92,7 @@ def AABox : Type = (Position & Position)  -- opposite corners
 
 def voxelWidth (lod: LoD) : Float = 
   -- voxels divide up cube in (-1, 1)
-  numDivisions = intpow2 $ ordinal lod
+  numDivisions = intpow2 lod
   2.0 / (IToF numDivisions)
 
 def voxelToCentrePosition (lod: LoD) (voxel: Voxel) : Position =
@@ -98,6 +102,7 @@ def voxelToCentrePosition (lod: LoD) (voxel: Voxel) : Position =
    divSize * (0.5 + IToF yn) - 1.0,
    divSize * (0.5 + IToF zn) - 1.0]
 
+-- czz: flip argumentments?
 def voxeltoBB (voxel: Voxel) (lod:LoD) : AABox =
   divSize = voxelWidth lod
   (xn, yn, zn) = voxel
@@ -130,7 +135,7 @@ def intersectsVoxel (lod: LoD) (ray:Ray) (voxel: Voxel) : Bool =
   rayAABBIntersection ray box
 
 
---def decide (lod: LOD) (ray:Ray) (voxel: Voxel) : (Fin 8)=>Bool =
+-- def decide (lod: LOD) (ray:Ray) (voxel: Voxel) : (Fin 8)=>Bool =
   -- Returned voxels are of the next level of detail.
 --  if intersectsVoxel ray voxel then
 --    (True, True, True, True, True, True, True, True)
@@ -166,11 +171,15 @@ def subVoxelPosToChildOctant (lod: LoD) (voxel: Voxel) (pos:Position) : Octant =
   bits = W8ToI $ bit1 .|. (bit2 << 1) .|. (bit3 << 2)
   bits@Octant
 
-def orderedChildren (lod: LoD) (ray:Ray) (voxel: Voxel) : Octant=>Octant =
-  -- todo: return only those children that intersect
+def orderedChildren (lod: LoD) (ray:Ray) (voxel: Voxel) : List Octant =
   (pos, dir) = ray
   oct = subVoxelPosToChildOctant lod voxel pos
-  octantBackToFrontTable oct
+  childOctants = octantBackToFrontTable oct
+  yieldAccum (ListMonoid Octant) \list.
+    for t.
+      subVoxel = childOctantToSubVoxel lod voxel childOctants.t
+      if intersectsVoxel (lod+1) ray subVoxel then
+        list += AsList 1 [childOctants.t]
 
 def subdivide (ray:Ray) (lod: LoD) ((AsList _ voxels) : List Voxel) : List Voxel =
   -- Returned voxels are of the next level of detail.
@@ -178,21 +187,28 @@ def subdivide (ray:Ray) (lod: LoD) ((AsList _ voxels) : List Voxel) : List Voxel
   yieldAccum (ListMonoid Voxel) \list.
     for t.
       if intersectsVoxel lod ray voxels.t then
-        childOcts = orderedChildren lod ray voxels.t
-        list += AsList 8 for i:(Fin 8). childOctantToSubVoxel lod voxels.t childOcts.i
+        (AsList _ childOcts) = orderedChildren lod ray voxels.t
+        list += AsList _ for i. childOctantToSubVoxel lod voxels.t childOcts.i
 
-def rayTraceOctTree (ray: Ray) : List Voxel =
-  -- Returns a depth-ordered list of voxels intersecting a ray.
+def rayTraceOctTree (ray:Ray) : List Voxel = 
   top_voxel = (0, 0, 0)
-  update = subdivide ray
   init = AsList 1 [top_voxel]
-  fold init update
-
+  yieldState init \ls_ref.
+    for lod:(Fin max_lod).
+      ls_ref := subdivide ray (ordinal lod) (get ls_ref)
 
 rayvoxels = rayTraceOctTree ([0.1, 0.1, 0.1], [1.0, 1.0, 1.0])
 
--- :p rayvoxels
+:p rayvoxels
 
+-- czz -- 
+-- section 3.4.
+def voxelToParentVoxel (childLod:LoD) (childVoxel:Voxel) : Voxel = 
+  -- the voxel returned is of childLod-1 LoD
+  zero
+
+-- caching V_l (r)
+rayVoxelsCache : (Fin numRays) => List Voxel = map rayTraceOctTree rays
 
 
 ---- Tests
@@ -493,10 +509,15 @@ objs1 = [ Light (1.9 .* yHat) 0.5 lightColor
     -- , PassiveObject (Sphere [ 2.0,  2.0, -2.0] 1.5) (Mirror)
     ]
 
+-- new stuffs
 (AsList _ vl) = rayvoxels
+:p vl
 
-shrink = 0.45
+
+
+shrink = 0.45 -- why
 objs2 = for i.
+  last = max_lod - 1
   cpos = shrink .* (voxelToCentrePosition last vl.i)
   vw = shrink * (0.5 * voxelWidth last)
   color = hslToRgb (ixFraction i) 1.0 0.5
@@ -528,5 +549,3 @@ camera = if dex_test_mode ()
 
 -- :html imseqshow xmovieflat
 -- pngsToSavedGif 1 (map imgToPng xmovieflat) "gwg"
-
-
