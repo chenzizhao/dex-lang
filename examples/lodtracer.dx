@@ -74,16 +74,9 @@ max_lod = 3
 -- def Voxel (numDivisions:Int) : Type =
 --  (Fin numDivisions & Fin numDivisions & Fin numDivisions)
 -- and only use util functions to access `Voxel` data
--- alternatively store lod as part of it 
--- def Voxel : Type = (LoD&Int&Int&Int)
--- def getLod ((lod, _, _, _):Voxel) : LoD = lod
--- def getOrdinals ((_, x, y, z):Voxel) : (Int&Int&Int) = (x,y,z)
 
 def Voxel : Type =
-  (Int & Int & Int)  -- Sad!
-
--- czz: helpful to keep track of which lod a voxel belongs to
--- def Voxel2 : Type = (LoD & Int & Int & Int)
+  (Int & Int & Int & LoD)  -- Sad!
 
 def AABox : Type = (Position & Position)  -- opposite corners
 
@@ -95,17 +88,16 @@ def voxelWidth (lod: LoD) : Float =
   numDivisions = intpow2 lod
   2.0 / (IToF numDivisions)
 
-def voxelToCentrePosition (lod: LoD) (voxel: Voxel) : Position =
+def voxelToCentrePosition (voxel: Voxel) : Position =
+  (xn, yn, zn, lod) = voxel
   divSize = voxelWidth lod
-  (xn, yn, zn) = voxel
   [divSize * (0.5 + IToF xn) - 1.0,
    divSize * (0.5 + IToF yn) - 1.0,
    divSize * (0.5 + IToF zn) - 1.0]
 
--- czz: flip argumentments?
-def voxeltoBB (voxel: Voxel) (lod:LoD) : AABox =
+def voxeltoBB (voxel: Voxel) : AABox =
+  (xn, yn, zn, lod) = voxel
   divSize = voxelWidth lod
-  (xn, yn, zn) = voxel
   lower = [divSize * (IToF xn) - 1.0,
            divSize * (IToF yn) - 1.0,
            divSize * (IToF zn) - 1.0]
@@ -128,10 +120,10 @@ def rayAABBIntersection (ray:Ray) (box:AABox) : Bool =
   tzf = max tz1 tz2
   tnear = max txn $ max tyn tzn
   tfar  = min txf $ min tyf tzf
-  tfar > tnear
+  tfar > tnear && tfar > 0.0
 
-def intersectsVoxel (lod: LoD) (ray:Ray) (voxel: Voxel) : Bool =
-  box = voxeltoBB voxel lod
+def intersectsVoxel (ray:Ray) (voxel: Voxel) : Bool =
+  box = voxeltoBB voxel
   rayAABBIntersection ray box
 
 
@@ -155,15 +147,16 @@ octantBackToFrontTable : Octant=>Octant=>Octant =
               [ 7, 3, 5, 6, 1, 2, 4, 0 ]]
   for i j. (intTable.i.j@Octant)
 
-def childOctantToSubVoxel (lod: LoD) (voxel: Voxel) (oct:Octant) : Voxel =
+def childOctantToSubVoxel (voxel: Voxel) (oct:Octant) : Voxel =
   oo = IToW8 $ ordinal oct
-  (x, y, z) = voxel
+  (x, y, z, lod) = voxel
   (2 * x + (BToI $ firstbit oo),
    2 * y + (BToI $ secondbit oo),
-   2 * z + (BToI $ thirdbit oo))
+   2 * z + (BToI $ thirdbit oo),
+   lod+1)
 
-def subVoxelPosToChildOctant (lod: LoD) (voxel: Voxel) (pos:Position) : Octant =
-  [mid_x, mid_y, mid_z] = voxelToCentrePosition lod voxel
+def subVoxelPosToChildOctant (voxel: Voxel) (pos:Position) : Octant =
+  [mid_x, mid_y, mid_z] = voxelToCentrePosition voxel
   [pos_x, pos_y, pos_z] = pos 
   bit1 = BToW8 $ pos_x > mid_x
   bit2 = BToW8 $ pos_y > mid_y
@@ -171,37 +164,36 @@ def subVoxelPosToChildOctant (lod: LoD) (voxel: Voxel) (pos:Position) : Octant =
   bits = W8ToI $ bit1 .|. (bit2 << 1) .|. (bit3 << 2)
   bits@Octant
 
-def orderedChildren (lod: LoD) (ray:Ray) (voxel: Voxel) : List Octant =
+def orderedChildren (ray:Ray) (voxel: Voxel) : List Octant =
   (pos, dir) = ray
-  oct = subVoxelPosToChildOctant lod voxel pos
+  oct = subVoxelPosToChildOctant voxel pos
   childOctants = octantBackToFrontTable oct
   yieldAccum (ListMonoid Octant) \list.
     for t.
-      subVoxel = childOctantToSubVoxel lod voxel childOctants.t
-      if intersectsVoxel (lod+1) ray subVoxel then
+      subVoxel = childOctantToSubVoxel voxel childOctants.t
+      if intersectsVoxel ray subVoxel then
         list += AsList 1 [childOctants.t]
 
-def subdivide (ray:Ray) (lod: LoD) ((AsList _ voxels) : List Voxel) : List Voxel =
+def subdivide (ray:Ray) ((AsList _ voxels) : List Voxel) : List Voxel =
   -- Returned voxels are of the next level of detail.
   -- Todo: Encode this in the types.
   yieldAccum (ListMonoid Voxel) \list.
     for t.
-      if intersectsVoxel lod ray voxels.t then
-        (AsList _ childOcts) = orderedChildren lod ray voxels.t
-        list += AsList _ for i. childOctantToSubVoxel lod voxels.t childOcts.i
+      (AsList _ childOcts) = orderedChildren ray voxels.t
+      list += AsList _ for i. childOctantToSubVoxel voxels.t childOcts.i
 
 def rayTraceOctTree (ray:Ray) : List Voxel = 
-  top_voxel = (0, 0, 0)
+  top_voxel = (0, 0, 0, 0)
   init = AsList 1 [top_voxel]
   yieldState init \ls_ref.
-    for lod:(Fin max_lod).
-      ls_ref := subdivide ray (ordinal lod) (get ls_ref)
+    for _:(Fin max_lod).
+      ls_ref := subdivide ray (get ls_ref)
 
 rayvoxels = rayTraceOctTree ([0.1, 0.1, 0.1], [1.0, 1.0, 1.0])
 
 :p rayvoxels
 
--- czz -- 
+-- czz todo -- 
 -- section 3.4.
 def voxelToParentVoxel (childLod:LoD) (childVoxel:Voxel) : Voxel = 
   -- the voxel returned is of childLod-1 LoD
@@ -498,12 +490,12 @@ rightWallColor = 1.5 .* [0.117, 0.4125, 0.115]
 whiteWallColor = [255.0, 239.0, 196.0] / 255.0
 blockColor     = [200.0, 200.0, 255.0] / 255.0
 
-objs1 = [ Light (1.9 .* yHat) 0.5 lightColor
-    , PassiveObject (Wall      xHat  2.0) (Matte whiteWallColor)
-    , PassiveObject (Wall (neg xHat) 2.0) (Matte whiteWallColor)
-    , PassiveObject (Wall      yHat  2.0) (Matte whiteWallColor)
-    , PassiveObject (Wall (neg yHat) 2.0) (Matte whiteWallColor)
-    , PassiveObject (Wall      zHat  2.0) (Matte whiteWallColor)
+objs1 = [ Light (1.0 .* yHat) 0.2 lightColor
+    , PassiveObject (Wall      xHat  1.5) (Matte whiteWallColor)
+    , PassiveObject (Wall (neg xHat) 1.5) (Matte whiteWallColor)
+    , PassiveObject (Wall      yHat  1.5) (Matte whiteWallColor)
+    , PassiveObject (Wall (neg yHat) 1.5) (Matte whiteWallColor)
+    , PassiveObject (Wall      zHat  1.5) (Matte whiteWallColor)
     -- , PassiveObject (Block  [ 1.0, -1.6,  1.2] [0.6, 0.8, 0.6] 0.5) (Matte blockColor)
     -- , PassiveObject (Sphere [-1.0, -1.2,  0.2] 0.8) (Matte (0.7.* whiteWallColor))
     -- , PassiveObject (Sphere [ 2.0,  2.0, -2.0] 1.5) (Mirror)
@@ -513,15 +505,18 @@ objs1 = [ Light (1.9 .* yHat) 0.5 lightColor
 (AsList _ vl) = rayvoxels
 :p vl
 
-
-
-shrink = 0.45 -- why
 objs2 = for i.
-  last = max_lod - 1
-  cpos = shrink .* (voxelToCentrePosition last vl.i)
-  vw = shrink * (0.5 * voxelWidth last)
+  cpos = voxelToCentrePosition vl.i
+  vw = 0.5 * voxelWidth max_lod
   color = hslToRgb (ixFraction i) 1.0 0.5
   PassiveObject (Block  cpos [vw, vw, vw] 0.0) (Matte color)
+
+raypos = [0.1, 0.1, 0.1]
+info = for i.
+  cpos = voxelToCentrePosition vl.i
+  dist = sum $ sq $ cpos-raypos
+  (vl.i, cpos, dist)
+:p info
 
 combl = (AsList _ objs1) <> (AsList _ objs2)
 (AsList _ cot) = combl
@@ -542,9 +537,9 @@ camera = if dex_test_mode ()
            then defaultCamera |> setAt #numPix 10
            else defaultCamera
 
-%time
-(MkImage _ _ image) = takePicture params theScene camera
-:html imshow image
+-- %time
+-- (MkImage _ _ image) = takePicture params theScene camera
+-- :html imshow image
 
 
 -- :html imseqshow xmovieflat
