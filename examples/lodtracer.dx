@@ -195,14 +195,8 @@ def test_sdf (pos:Position):Distance =
 
 Feature = (Fin 3)=>Float  -- also defined in nglod.dx
 In_t = (Fin 6)
--- def posToFeature (pos:Position) (lod:LoD) : Feature = 
---   lod' = lod+1
---   sum for i:(Fin lod'). -- for all parent voxels
---     inputTable = input_tables.((ordinal i)@_) -- use appropriate inputTable
---     -- input_tables is a global cache / defined in nglod.dx
---     spatialFeatures inputTable pos -- accumulate features
 
-def posToDistance (pos:Position) (lod:LoD) (mlp:(In_t=>Float)->Distance) : Distance =
+def posToDistance (pos:Position) (lod:LoD) : Distance =
   -- input = concat' pos (posToFeature pos lod) 
   -- -- concat' should be the version with cast.
   -- wnb = wnb_sgds.((lod-1)@_) -- use appropriate WnB
@@ -216,10 +210,21 @@ def posToDistance (pos:Position) (lod:LoD) (mlp:(In_t=>Float)->Distance) : Dista
 -- rayVoxelsCache : (Fin numRays) => List Voxel = map rayTraceOctTree rays
 
 def voxelContainsSurface (voxel:Voxel) (ray:Ray) (sdf:Position->Distance) : Bool = 
-  -- czz: todo 
+  -- todo 
   -- ask: how does it work, fast?
   -- without this function properly implemented, the octree is not sparse
   True
+
+def voxelContainsSurface2 (voxel:Voxel) (ray:Ray) (sdf:Position->Distance) : Bool = 
+  -- czz: todo
+  -- idea: compute the further box-ray intersection point
+  -- idea: and then check whether the sdf is negative 
+  -- for now, just sample 8 points and evaluate them against sdf. 
+  any for oct:Octant. 
+    subVoxel = childOctantToSubVoxel voxel oct
+    childPos = voxelToCentrePosition subVoxel
+    sdf childPos <= 0.0
+  -- True
 
 ---- Tests
 
@@ -558,9 +563,9 @@ camera = if dex_test_mode ()
            then defaultCamera |> setAt #numPix 10
            else defaultCamera
 
--- %time
--- (MkImage _ _ image) = takePicture params theScene camera
--- :html imshow image
+%time
+(MkImage _ _ image) = takePicture params theScene camera
+:html imshow image
 
 
 -- :html imseqshow xmovieflat
