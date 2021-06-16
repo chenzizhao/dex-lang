@@ -67,13 +67,9 @@ Octant = Fin 8 -- (Bool & Bool & Bool)  -- positive in x, y, or z
 LoD = Int
 max_lod = 3
 
--- def Voxel (lod:LoD) : Type =
---  (Fin lod)=>Octants
-
 -- czz: why doesn't this work? 
 -- def Voxel (numDivisions:Int) : Type =
 --  (Fin numDivisions & Fin numDivisions & Fin numDivisions)
--- and only use util functions to access `Voxel` data
 
 def Voxel : Type =
   (Int & Int & Int & LoD)  -- Sad!
@@ -127,13 +123,6 @@ def intersectsVoxel (ray:Ray) (voxel: Voxel) : Bool =
   rayAABBIntersection ray box
 
 
--- def decide (lod: LOD) (ray:Ray) (voxel: Voxel) : (Fin 8)=>Bool =
-  -- Returned voxels are of the next level of detail.
---  if intersectsVoxel ray voxel then
---    (True, True, True, True, True, True, True, True)
---  else
-
-
 '## Octtree intersection
 
 octantBackToFrontTable : Octant=>Octant=>Octant =
@@ -182,31 +171,57 @@ def subdivide (ray:Ray) ((AsList _ voxels) : List Voxel) : List Voxel =
       (AsList _ childOcts) = orderedChildren ray voxels.t
       list += AsList _ for i. childOctantToSubVoxel voxels.t childOcts.i
 
-def rayTraceOctTree (ray:Ray) : List Voxel = 
+def rayTraceOctTree (maxLod:LoD) (ray:Ray) : List Voxel = 
   top_voxel = (0, 0, 0, 0)
   init = AsList 1 [top_voxel]
   yieldState init \ls_ref.
-    for _:(Fin max_lod).
+    for _:(Fin maxLod).
       ls_ref := subdivide ray (get ls_ref)
 
-rayvoxels = rayTraceOctTree ([0.1, 0.1, 0.1], [1.0, 1.0, 1.0])
+rayvoxels = rayTraceOctTree max_lod ([0.1, 0.1, 0.1], [1.0, 1.0, 1.0])
 
 :p rayvoxels
 
--- czz todo -- 
--- section 3.4.
-def voxelToParentVoxel (childLod:LoD) (childVoxel:Voxel) : Voxel = 
-  -- the voxel returned is of childLod-1 LoD
-  zero
+-- czz WIP -- 
+def test_sdf (pos:Position):Distance =
+  -- return 0.0 if pos is on a sphere, 
+  -- negative number if pos in sphere, 
+  -- positive number if pos outside sphere
+  sphereOrigin : Position = [0.1,0.0,0.0]
+  sphereRadius : Float = 0.5
+  vec : Position = pos - sphereOrigin
+  dist : Distance = sqrt $ sum for d. (sq vec.d)
+  dist - sphereRadius
+
+Feature = (Fin 3)=>Float  -- also defined in nglod.dx
+In_t = (Fin 6)
+-- def posToFeature (pos:Position) (lod:LoD) : Feature = 
+--   lod' = lod+1
+--   sum for i:(Fin lod'). -- for all parent voxels
+--     inputTable = input_tables.((ordinal i)@_) -- use appropriate inputTable
+--     -- input_tables is a global cache / defined in nglod.dx
+--     spatialFeatures inputTable pos -- accumulate features
+
+def posToDistance (pos:Position) (lod:LoD) (mlp:(In_t=>Float)->Distance) : Distance =
+  -- input = concat' pos (posToFeature pos lod) 
+  -- -- concat' should be the version with cast.
+  -- wnb = wnb_sgds.((lod-1)@_) -- use appropriate WnB
+  -- -- wnb_sgds is also a global cache / trained in nglod.dx
+  -- mlp input wnb
+
+  -- for now use the exact sdf and add some disturbance
+  test_sdf pos
 
 -- caching V_l (r)
-rayVoxelsCache : (Fin numRays) => List Voxel = map rayTraceOctTree rays
+-- rayVoxelsCache : (Fin numRays) => List Voxel = map rayTraceOctTree rays
 
+def voxelContainsSurface (voxel:Voxel) (ray:Ray) (sdf:Position->Distance) : Bool = 
+  -- czz: todo 
+  -- ask: how does it work, fast?
+  -- without this function properly implemented, the octree is not sparse
+  True
 
 ---- Tests
-
---p = voxelToCentrePosition (2@LoD) (0, 2, 0)
--- :p subVoxelPosToChildOctant (1@LoD) (0, 2, 0) p
 
 :p rayAABBIntersection ([0., 0., 0.], [0.1, 0.1, 0.1]) ([-0.1, -0.1, -0.1], [0.1, 0.1, 0.1])
 
@@ -398,6 +413,12 @@ def raymarch (scene:Scene n) (ray:Ray) : RayMarchResult =
               Done $ case obj of
                 PassiveObject _ surf -> HitObj (rayPos, rayDir) (surfNorm, surf)
                 Light _ _ radiance   -> HitLight radiance
+
+
+def raymarch2 (scene:Scene n) (ray:Ray) : RayMarchResult =
+-- adaptive raymarch
+-- czz: todo
+  HitNothing
 
 def rayDirectRadiance (scene:Scene n) (ray:Ray) : Radiance =
   case raymarch scene ray of
