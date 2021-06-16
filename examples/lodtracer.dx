@@ -3,6 +3,8 @@ import plot
 
 '## General Utilies
 
+def length    (x: d=>Float) : Float = sqrt $ sum for i. sq x.i
+
 def pngsToSavedGif (delay:Int) (pngs:t=>Png) (outFileName:String) : Gif =
   unsafeIO \().
     withTempFiles \pngFiles.
@@ -65,7 +67,7 @@ Ray = (Position & Direction)
 Octant = Fin 8 -- (Bool & Bool & Bool)  -- positive in x, y, or z
 
 LoD = Int
-max_lod = 3
+max_lod = 7
 
 -- czz: why doesn't this work? 
 -- def Voxel (numDivisions:Int) : Type =
@@ -177,7 +179,7 @@ def rayTraceOctTree (maxLod:LoD) (ray:Ray) : List Voxel =
   yieldState init \ls_ref.
     for _:(Fin maxLod).
       ls_ref := subdivide ray (get ls_ref)
-
+%time
 rayvoxels = rayTraceOctTree max_lod ([0.1, 0.1, 0.1], [1.0, 1.0, 1.0])
 
 :p rayvoxels
@@ -187,11 +189,11 @@ def test_sdf (pos:Position):Distance =
   -- return 0.0 if pos is on a sphere, 
   -- negative number if pos in sphere, 
   -- positive number if pos outside sphere
-  sphereOrigin : Position = [0.1,0.0,0.0]
-  sphereRadius : Float = 0.5
-  vec : Position = pos - sphereOrigin
-  dist : Distance = sqrt $ sum for d. (sq vec.d)
-  dist - sphereRadius
+  sphereOrigin : Position = [0.03,(-0.05),(0.01)]
+  sphereRadius : Float = 0.05
+  pos' : Position = pos - sphereOrigin
+  max (length pos' - sphereRadius) 0.0
+  
 
 Feature = (Fin 3)=>Float  -- also defined in nglod.dx
 In_t = (Fin 6)
@@ -220,10 +222,11 @@ def voxelContainsSurface2 (voxel:Voxel) (ray:Ray) (sdf:Position->Distance) : Boo
   -- idea: compute the further box-ray intersection point
   -- idea: and then check whether the sdf is negative 
   -- for now, just sample 8 points and evaluate them against sdf. 
-  any for oct:Octant. 
-    subVoxel = childOctantToSubVoxel voxel oct
-    childPos = voxelToCentrePosition subVoxel
-    sdf childPos <= 0.0
+  sdf (voxelToCentrePosition voxel) <= 0.0
+  -- any for oct:Octant. 
+  --   subVoxel = childOctantToSubVoxel voxel oct
+  --   childPos = voxelToCentrePosition subVoxel
+  --   sdf childPos <= 0.0
   -- True
 
 ---- Tests
@@ -244,7 +247,6 @@ Some of these should probably go in prelude.
 def Mat (n:Int) (m:Int) : Type = Fin n => Fin m => Float
 
 def relu (x:Float) : Float = max x 0.0
-def length    (x: d=>Float) : Float = sqrt $ sum for i. sq x.i
 -- TODO: make a newtype for normal vectors
 def normalize (x: d=>Float) : d=>Float = x / (length x)
 def directionAndLength (x: d=>Float) : (d=>Float & Float) =
@@ -319,6 +321,7 @@ data ObjectGeom =
   Wall Direction Distance
   Block Position BlockHalfWidths Angle
   Sphere Position Radius
+  -- Mystery 
 
 data Surface =
   Matte Color
@@ -373,6 +376,8 @@ def sdObject (pos:Position) (obj:Object) : Distance =
       Sphere spherePos r ->
         pos' = pos - spherePos
         max (length pos' - r) 0.0
+      -- Mystery ->
+
     Light squarePos hw _ ->
       pos' = pos - squarePos
       halfWidths = [hw, 0.01, hw]
@@ -516,12 +521,12 @@ rightWallColor = 1.5 .* [0.117, 0.4125, 0.115]
 whiteWallColor = [255.0, 239.0, 196.0] / 255.0
 blockColor     = [200.0, 200.0, 255.0] / 255.0
 
-objs1 = [ Light (1.0 .* yHat) 0.2 lightColor
-    , PassiveObject (Wall      xHat  1.5) (Matte whiteWallColor)
-    , PassiveObject (Wall (neg xHat) 1.5) (Matte whiteWallColor)
-    , PassiveObject (Wall      yHat  1.5) (Matte whiteWallColor)
-    , PassiveObject (Wall (neg yHat) 1.5) (Matte whiteWallColor)
-    , PassiveObject (Wall      zHat  1.5) (Matte whiteWallColor)
+objs1 = [ Light (0.1 .* yHat) 0.1 lightColor
+    , PassiveObject (Wall      xHat  0.15) (Matte whiteWallColor)
+    , PassiveObject (Wall (neg xHat) 0.15) (Matte whiteWallColor)
+    , PassiveObject (Wall      yHat  0.15) (Matte whiteWallColor)
+    , PassiveObject (Wall (neg yHat) 0.15) (Matte whiteWallColor)
+    , PassiveObject (Wall      zHat  0.15) (Matte whiteWallColor)
     -- , PassiveObject (Block  [ 1.0, -1.6,  1.2] [0.6, 0.8, 0.6] 0.5) (Matte blockColor)
     -- , PassiveObject (Sphere [-1.0, -1.2,  0.2] 0.8) (Matte (0.7.* whiteWallColor))
     -- , PassiveObject (Sphere [ 2.0,  2.0, -2.0] 1.5) (Mirror)
@@ -537,12 +542,12 @@ objs2 = for i.
   color = hslToRgb (ixFraction i) 1.0 0.5
   PassiveObject (Block  cpos [vw, vw, vw] 0.0) (Matte color)
 
-raypos = [0.1, 0.1, 0.1]
-info = for i.
-  cpos = voxelToCentrePosition vl.i
-  dist = sum $ sq $ cpos-raypos
-  (vl.i, cpos, dist)
-:p info
+-- raypos = [0.1, 0.1, 0.1]
+-- info = for i.
+--   cpos = voxelToCentrePosition vl.i
+--   dist = sum $ sq $ cpos-raypos
+--   (vl.i, cpos, dist)
+-- :p info
 
 combl = (AsList _ objs1) <> (AsList _ objs2)
 (AsList _ cot) = combl
@@ -553,7 +558,7 @@ defaultParams = { numSamples = 1
                 , shareSeed  = True }
 
 defaultCamera = { numPix     = 400
-                , pos        = 10.0 .* zHat
+                , pos        = 1.0 .* zHat
                 , halfWidth  = 0.3
                 , sensorDist = 1.0 }
 
@@ -563,10 +568,72 @@ camera = if dex_test_mode ()
            then defaultCamera |> setAt #numPix 10
            else defaultCamera
 
-%time
-(MkImage _ _ image) = takePicture params theScene camera
-:html imshow image
+-- %time
+-- (MkImage _ _ image) = takePicture params theScene camera
+-- :html imshow image
 
 
 -- :html imseqshow xmovieflat
 -- pngsToSavedGif 1 (map imgToPng xmovieflat) "gwg"
+
+
+-- construct a sphere of lowest level voxels
+
+camera1 = { numPix     = 400
+          , pos        = 1.0 .* zHat
+          , halfWidth  = 0.03
+          , sensorDist = 0.1 }
+camera1_pos = 1.0 .* zHat
+
+n = 150
+rays = cameraRays n camera1
+rootKey = newKey 0
+
+%time
+lowestLevelVoxels = 
+  for i j.
+    pixKey = if getAt #shareSeed defaultParams
+      then rootKey
+      else ixkey (ixkey rootKey i) j
+    ray = rays.i.j pixKey  
+    (AsList _ rayVoxels) = rayTraceOctTree max_lod ray
+    condition = \voxel. voxelContainsSurface2 voxel ray test_sdf 
+    (AsList n' filteredRayVoxels) = filter condition rayVoxels
+    if n'== 0 
+      then (AsList 0 [])
+      else (AsList 1 [head filteredRayVoxels])
+
+%time
+flattenedLowestLevelVoxels = concat for i. concat lowestLevelVoxels.i
+(AsList _ vl3) = flattenedLowestLevelVoxels
+
+minDist = minimum for i. 
+  cpos = voxelToCentrePosition vl3.i
+  length $ cpos - camera1_pos
+
+maxDist = maximum for i. 
+  cpos = voxelToCentrePosition vl3.i
+  length $ cpos - camera1_pos
+
+:p (minDist, maxDist)
+
+def myNormalize (x:Float) (min:Float) (max:Float) : Float = 
+  (x-min) / (max-min)
+
+objs3 = for i.
+  cpos = voxelToCentrePosition vl3.i
+  vw = 0.5 * voxelWidth max_lod
+  camera_voxel_dist = length $ cpos - camera1_pos
+  h = myNormalize camera_voxel_dist minDist maxDist
+  color = hslToRgb h 1.0 0.5
+  PassiveObject (Block  cpos [vw, vw, vw] 0.0) (Matte color)
+
+:t objs3
+
+combl3 = (AsList _ objs1) <> (AsList _ objs3)
+(AsList _ cot3) = combl3
+theScene3 = MkScene cot3
+
+%time
+(MkImage _ _ image3) = takePicture params theScene3 camera
+:html imshow image3
