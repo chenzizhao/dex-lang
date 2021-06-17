@@ -346,7 +346,7 @@ data ObjectGeom =
   Wall Direction Distance
   Block Position BlockHalfWidths Angle
   Sphere Position Radius
-  -- Mystery 
+  ImplicitVolume Int -- id == 0 for test shape
 
 data Surface =
   Matte Color
@@ -367,15 +367,8 @@ Params = { numSamples : Int
          & maxBounces : Int
          & shareSeed  : Bool }
 
-Cache = {
-    getInitRayVoxelCache : Type -> Type -> List Voxel
-&   getReflectRayVoxelCache : Ray -> List Voxel
-&   setReflectRayVoxelCache : Ray -> List Voxel
-  -- czz: todo
-  -- maybe set ray Id? 
-  -- is append fast? 
-  -- do we want to cache reflection rays at all? 
-}
+-- move this somewhere else
+RayC = (Ray & (List Voxel))
 
 -- TODO: use a list instead, once they work
 data Scene n:Type = MkScene (n=>Object)
@@ -412,6 +405,10 @@ def sdObject (pos:Position) (obj:Object) : Distance =
         pos' = pos - spherePos
         max (length pos' - r) 0.0
       -- Mystery ->
+      ImplicitVolume id -> 
+        -- czz: todo: for now always return infinity
+        (1.0/0.0)
+      -- RayC
 
     Light squarePos hw _ ->
       pos' = pos - squarePos
@@ -420,6 +417,7 @@ def sdObject (pos:Position) (obj:Object) : Distance =
 
 def sdScene (scene:Scene n) (pos:Position) : (Object & Distance) =
   (MkScene objs) = scene
+  -- RayC
   (i, d) = minimumBy snd $ for i. (i, sdObject pos objs.i)
   (objs.i, d)
 
@@ -443,7 +441,7 @@ def raymarch (scene:Scene n) (ray:Ray) : RayMarchResult =
   withState (10.0 * tol) \rayLength.
     boundedIter maxIters HitNothing \_.
       rayPos = rayOrigin + get rayLength .* rayDir
-      (obj, d) = sdScene scene $ rayPos
+      (obj, d) = sdScene scene $ rayPos -- RayC = (ray, rayList)
       -- 0.9 ensures we come close to the surface but don't touch it
       rayLength := get rayLength + 0.9 * d
       case d < tol of
@@ -493,6 +491,10 @@ def sampleLightRadiance
 
 def trace (params:Params) (scene:Scene n) (initRay:Ray) (k:Key) : Color =
   noFilter = [1.0, 1.0, 1.0]
+  -- todo save maxLod in params
+  initRayList = rayTraceOctTreeSparse max_lod initRay
+  initRayC = (initRay, initRayList)
+
   yieldAccum (AddMonoid Float) \radiance.
     runState  noFilter \filter.
      runState initRay  \ray.
@@ -555,6 +557,7 @@ leftWallColor  = 1.5 .* [0.611, 0.0555, 0.062]
 rightWallColor = 1.5 .* [0.117, 0.4125, 0.115]
 whiteWallColor = [255.0, 239.0, 196.0] / 255.0
 blockColor     = [200.0, 200.0, 255.0] / 255.0
+testObjColor   = blockColor
 
 objs1 = [ Light (0.1 .* yHat) 0.1 lightColor
     , PassiveObject (Wall      xHat  0.15) (Matte leftWallColor)
@@ -562,6 +565,8 @@ objs1 = [ Light (0.1 .* yHat) 0.1 lightColor
     , PassiveObject (Wall      yHat  0.15) (Matte whiteWallColor)
     , PassiveObject (Wall (neg yHat) 0.15) (Matte whiteWallColor)
     , PassiveObject (Wall      zHat  0.15) (Matte whiteWallColor)
+    -- implicit object with id=0 is the test sphere. 
+    , PassiveObject (ImplicitVolume  0)    (Matte testObjColor)
     -- , PassiveObject (Block  [ 1.0, -1.6,  1.2] [0.6, 0.8, 0.6] 0.5) (Matte blockColor)
     -- , PassiveObject (Sphere [-1.0, -1.2,  0.2] 0.8) (Matte (0.7.* whiteWallColor))
     -- , PassiveObject (Sphere [ 2.0,  2.0, -2.0] 1.5) (Mirror)
@@ -573,7 +578,7 @@ defaultParams = { numSamples = 1
                 , maxBounces = 2
                 , shareSeed  = True }
 
-defaultCamera = { numPix     = 400
+defaultCamera = { numPix     = 100 -- 400
                 , pos        = 1.0 .* zHat
                 , halfWidth  = 0.3
                 , sensorDist = 1.0 }
