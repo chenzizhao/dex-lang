@@ -224,9 +224,9 @@ def rayTraceOctTreeSparse (maxLod:LoD) (ray:Ray) : List Voxel =
   filter condition voxels
 
 def inVoxelList (vCurr:Voxel) ((AsList n vs) : List Voxel) : Bool = 
-  case n == 0 of
-    True -> False
-    False -> anySat ((==) vCurr) vs
+  if n==0 
+    then False 
+    else anySat ((==) vCurr) vs
 
 def isStrictAfter (v1:Voxel) ((_, rayDir) : Ray) (v2:Voxel) : Bool = 
   -- assume both v1 and v2 are intersected by ray
@@ -240,14 +240,14 @@ def isStrictAfter (v1:Voxel) ((_, rayDir) : Ray) (v2:Voxel) : Bool =
   (vdot vDir rayDir) > 0.
 
 def nextVoxelInDepthOrderedList (vCurr:Voxel) ((AsList n vs):List Voxel) (ray:Ray) : Maybe Voxel = 
-  case n == 0 of
-    True -> Nothing
-    False -> 
+  if n == 0
+    then Nothing
+    else 
       condition = isStrictAfter vCurr ray
       (AsList nInds inds) = argFilter condition vs
-      case nInds == 0 of
-        True -> Nothing
-        False -> Just vs.(head inds)
+      if nInds == 0
+        then Nothing
+        else Just vs.(head inds)
 
 def posInRootVoxel (pos:Position) : Bool = 
   all for d. pos.d <= 1.0 && pos.d >= (-1.0) 
@@ -594,6 +594,6 @@ camera = if dex_test_mode ()
            then defaultCamera |> setAt #numPix 10
            else defaultCamera
 
-%time
-(MkImage _ _ image) = takePicture params theScene camera
-:html imshow image
+-- %time
+-- (MkImage _ _ image) = takePicture params theScene camera
+-- :html imshow image
