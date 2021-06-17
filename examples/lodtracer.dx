@@ -232,10 +232,12 @@ def isStrictAfter (v1:Voxel) ((_, rayDir) : Ray) (v2:Voxel) : Bool =
   -- assume both v1 and v2 are intersected by ray
   -- return True if v2 is after v1
   --       False if overlaps or v2 is before v1
-  cpos1 = voxelToCentrePosition v1
-  cpos2 = voxelToCentrePosition v2
-  cVec = cpos2 - cpos1
-  (vdot cVec rayDir) > 0.
+  (x1, y1, z1, _) = v1
+  (x2, y2, z2, _) = v2
+  pos1 = map IToF [x1, y1, z1]
+  pos2 = map IToF [x2, y2, z2]
+  vDir = pos2 - pos1
+  (vdot vDir rayDir) > 0.
 
 def nextVoxelInDepthOrderedList (vCurr:Voxel) ((AsList n vs):List Voxel) (ray:Ray) : Maybe Voxel = 
   case n == 0 of
@@ -246,6 +248,9 @@ def nextVoxelInDepthOrderedList (vCurr:Voxel) ((AsList n vs):List Voxel) (ray:Ra
       case nInds == 0 of
         True -> Nothing
         False -> Just vs.(head inds)
+
+def posInRootVoxel (pos:Position) : Bool = 
+  all for d. pos.d <= 1.0 && pos.d >= (-1.0) 
 -- czz WIP -- 
 
 
@@ -362,6 +367,16 @@ Params = { numSamples : Int
          & maxBounces : Int
          & shareSeed  : Bool }
 
+Cache = {
+    getInitRayVoxelCache : Type -> Type -> List Voxel
+&   getReflectRayVoxelCache : Ray -> List Voxel
+&   setReflectRayVoxelCache : Ray -> List Voxel
+  -- czz: todo
+  -- maybe set ray Id? 
+  -- is append fast? 
+  -- do we want to cache reflection rays at all? 
+}
+
 -- TODO: use a list instead, once they work
 data Scene n:Type = MkScene (n=>Object)
 
@@ -409,6 +424,7 @@ def sdScene (scene:Scene n) (pos:Position) : (Object & Distance) =
   (objs.i, d)
 
 def calcNormal (obj:Object) (pos:Position) : Direction =
+  -- czz: todo how does this work with caching and stuff?
   normalize (grad (flip sdObject obj) pos)
 
 data RayMarchResult =
@@ -490,6 +506,7 @@ def trace (params:Params) (scene:Scene n) (initRay:Ray) (k:Key) : Color =
             [k1, k2] = splitKey $ hash k i
             lightRadiance = sampleLightRadiance scene osurf incidentRay k1
             ray    := sampleReflection osurf incidentRay k2
+            -- czz: todo cache reflection rays? 
             filter := surfaceFilter (get filter) (snd osurf)
             radiance += applyFilter (get filter) lightRadiance
             Continue
@@ -515,6 +532,9 @@ def cameraRays (n:Int) (camera:Camera) : Fin n => Fin n => (Key -> Ray) =
     (getAt #pos camera, normalize [x, y, neg (getAt #sensorDist camera)])
 
 def takePicture (params:Params) (scene:Scene m) (camera:Camera) : Image =
+  -- czz: todo 
+  -- take camera out of this func
+  -- pass in rays and pass in global cache instead
   n = getAt #numPix camera
   rays = cameraRays n camera
   rootKey = newKey 0
