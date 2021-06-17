@@ -62,7 +62,7 @@ Ray = (Position & Direction)
 Octant = Fin 8 -- (Bool & Bool & Bool)  -- positive in x, y, or z
 
 LoD = Int
-max_lod = 4
+max_lod = 5
 
 -- czz: why doesn't this work? 
 -- def Voxel (numDivisions:Int) : Type =
@@ -116,18 +116,18 @@ def rayAABBIntersection (ray:Ray) (box:AABox) : Bool =
   (tfar, tnear) = rayAABBIntersectionHelper ray box
   tfar > tnear && tfar > 0.0
 
-def rayAABBIntersectionPos (ray:Ray) (box:AABox) : Position = 
+def rayAABBIntersectionDistance (ray:Ray) (box:AABox) : Distance = 
   (_, tnear) = rayAABBIntersectionHelper ray box
-  (ray_pos, ray_dir) = ray
-  ray_pos + tnear .* ray_dir
+  (_, ray_dir) = ray
+  tnear * (length ray_dir)
 
 def intersectsVoxel (ray:Ray) (voxel: Voxel) : Bool =
   box = voxeltoBB voxel
   rayAABBIntersection ray box
 
-def intersectsVoxelPos (ray:Ray) (voxel: Voxel) : Position =
+def intersectsVoxelDistance (ray:Ray) (voxel: Voxel) : Distance =
   box = voxeltoBB voxel
-  rayAABBIntersectionPos ray box
+  rayAABBIntersectionDistance ray box
 
 '## Octtree intersection
 
@@ -177,8 +177,9 @@ def subdivide (ray:Ray) ((AsList _ voxels) : List Voxel) : List Voxel =
       (AsList _ childOcts) = orderedChildren ray voxels.t
       list += AsList _ for i. childOctantToSubVoxel voxels.t childOcts.i
 
+top_voxel : Voxel = (0, 0, 0, 0) -- todo: put it somewhere else
+
 def rayTraceOctTree (maxLod:LoD) (ray:Ray) : List Voxel = 
-  top_voxel = (0, 0, 0, 0)
   init = AsList 1 [top_voxel]
   yieldState init \ls_ref.
     for _:(Fin maxLod).
@@ -239,18 +240,30 @@ def isStrictAfter (v1:Voxel) ((_, rayDir) : Ray) (v2:Voxel) : Bool =
   vDir = pos2 - pos1
   (vdot vDir rayDir) > 0.
 
-def nextVoxelInDepthOrderedList (vCurr:Voxel) ((AsList n vs):List Voxel) (ray:Ray) : Maybe Voxel = 
+invalid_voxel : Voxel = (0,0,0,(-1))
+
+def nextVoxelInDepthOrderedList (vCurr:Voxel) ((AsList n vs):List Voxel) (ray:Ray) : Voxel =
   if n == 0
-    then Nothing
+    then invalid_voxel
     else 
       condition = isStrictAfter vCurr ray
       (AsList nInds inds) = argFilter condition vs
       if nInds == 0
-        then Nothing
-        else Just vs.(head inds)
+        then invalid_voxel
+        else vs.(head inds)
 
 def posInRootVoxel (pos:Position) : Bool = 
   all for d. pos.d <= 1.0 && pos.d >= (-1.0) 
+
+def leafVoxel (pos:Position) : Voxel = 
+  -- assume pos is in root voxel
+  -- czz: use fold and other utils
+  lods = max_lod + 1
+  update = \ _:(Fin lods) v:Voxel.
+    childOct = subVoxelPosToChildOctant v pos
+    childOctantToSubVoxel v childOct
+  fold top_voxel update
+
 -- czz WIP -- 
 
 
@@ -258,6 +271,7 @@ def posInRootVoxel (pos:Position) : Bool =
 
 :p rayAABBIntersection ([0., 0., 0.], [0.1, 0.1, 0.1]) ([-0.1, -0.1, -0.1], [0.1, 0.1, 0.1])
 
+:p leafVoxel [0.1, 0.1, 0.1]
 
 
 '## Raytracer for debugging
@@ -394,7 +408,8 @@ def surfaceFilter (filter:Filter) (surf:Surface) : Filter =
     Matte color -> for i. filter.i * color.i
     Mirror      -> filter
 
-def sdObject (pos:Position) (obj:Object) (rayC: RayC): Distance =
+def sdObject (pos:Position) (obj:Object) ((ray, rayList): RayC): Distance =
+  (rayPos, rayDir) = ray
   case obj of
     PassiveObject geom _ -> case geom of
       Wall nor d -> d + dot nor pos
@@ -404,11 +419,25 @@ def sdObject (pos:Position) (obj:Object) (rayC: RayC): Distance =
       Sphere spherePos r ->
         pos' = pos - spherePos
         max (length pos' - r) 0.0
-      -- Mystery ->
-      ImplicitVolume id -> 
-        -- czz: todo: for now always return infinity
-        (1.0/0.0)
-      -- RayC
+      ImplicitVolume _ ->
+        posInf = (1.0/0.0)
+        distance = if not (posInRootVoxel pos) 
+          then posInf
+          else
+            posVoxel = leafVoxel pos
+            if (inVoxelList posVoxel rayList) 
+              then (sdfWrap max_lod pos)  -- max_lod here should be adjustable
+              else 
+                nextVoxel = nextVoxelInDepthOrderedList posVoxel rayList ray
+                if nextVoxel == invalid_voxel
+                  then posInf
+                  else (intersectsVoxelDistance (pos, rayDir) nextVoxel)
+      --   -- todo: the following check may be unnecessary, return distance instead
+      --   nextPos = pos + 0.9 .* distance .* rayDir
+      --   if not (posInRootVoxel nextPos)
+      --     then posInf
+      --     else distance
+        posInf
 
     Light squarePos hw _ ->
       pos' = pos - squarePos
@@ -417,7 +446,6 @@ def sdObject (pos:Position) (obj:Object) (rayC: RayC): Distance =
 
 def sdScene (scene:Scene n) (pos:Position) (rayC: RayC): (Object & Distance) =
   (MkScene objs) = scene
-  -- RayC
   (i, d) = minimumBy snd $ for i. (i, sdObject pos objs.i rayC)
   (objs.i, d)
 
@@ -433,7 +461,6 @@ data RayMarchResult =
   HitNothing
 
 def raymarch (scene:Scene n) (rayC:RayC) : RayMarchResult =
-  -- czz: todo customize for adaptive raymarch
   maxIters = 100
   tol = 0.01
   startLength = 10.0 * tol  -- trying to escape the current surface
@@ -513,7 +540,6 @@ def trace (params:Params) (scene:Scene n) (initRay:Ray) (k:Key) : Color =
             ray = sampleReflection osurf incidentRay k2
             rayList = rayTraceOctTreeSparse max_lod ray
             rayC := (ray, rayList)
-            -- czz: todo cache reflection rays? 
             filter := surfaceFilter (get filter) (snd osurf)
             radiance += applyFilter (get filter) lightRadiance
             Continue
@@ -539,9 +565,6 @@ def cameraRays (n:Int) (camera:Camera) : Fin n => Fin n => (Key -> Ray) =
     (getAt #pos camera, normalize [x, y, neg (getAt #sensorDist camera)])
 
 def takePicture (params:Params) (scene:Scene m) (camera:Camera) : Image =
-  -- czz: todo 
-  -- take camera out of this func
-  -- pass in rays and pass in global cache instead
   n = getAt #numPix camera
   rays = cameraRays n camera
   rootKey = newKey 0
@@ -594,6 +617,6 @@ camera = if dex_test_mode ()
            then defaultCamera |> setAt #numPix 10
            else defaultCamera
 
--- %time
--- (MkImage _ _ image) = takePicture params theScene camera
--- :html imshow image
+%time
+(MkImage _ _ image) = takePicture params theScene camera
+:html imshow image
