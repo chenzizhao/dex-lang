@@ -62,7 +62,7 @@ Ray = (Position & Direction)
 Octant = Fin 8 -- (Bool & Bool & Bool)  -- positive in x, y, or z
 
 LoD = Int
-max_lod = 6
+max_lod = 4
 
 -- czz: why doesn't this work? 
 -- def Voxel (numDivisions:Int) : Type =
@@ -394,7 +394,7 @@ def surfaceFilter (filter:Filter) (surf:Surface) : Filter =
     Matte color -> for i. filter.i * color.i
     Mirror      -> filter
 
-def sdObject (pos:Position) (obj:Object) : Distance =
+def sdObject (pos:Position) (obj:Object) (rayC: RayC): Distance =
   case obj of
     PassiveObject geom _ -> case geom of
       Wall nor d -> d + dot nor pos
@@ -415,15 +415,15 @@ def sdObject (pos:Position) (obj:Object) : Distance =
       halfWidths = [hw, 0.01, hw]
       length $ for i. max ((abs pos'.i) - halfWidths.i) 0.0
 
-def sdScene (scene:Scene n) (pos:Position) : (Object & Distance) =
+def sdScene (scene:Scene n) (pos:Position) (rayC: RayC): (Object & Distance) =
   (MkScene objs) = scene
   -- RayC
-  (i, d) = minimumBy snd $ for i. (i, sdObject pos objs.i)
+  (i, d) = minimumBy snd $ for i. (i, sdObject pos objs.i rayC)
   (objs.i, d)
 
-def calcNormal (obj:Object) (pos:Position) : Direction =
+def calcNormal (obj:Object) (pos:Position) (rayC: RayC): Direction =
   -- czz: todo how does this work with caching and stuff?
-  normalize (grad (flip sdObject obj) pos)
+  normalize (grad (\pos. sdObject pos obj rayC) pos)
 
 data RayMarchResult =
   -- incident ray, surface normal, surface properties
@@ -432,22 +432,23 @@ data RayMarchResult =
   -- Could refine with failure reason (beyond horizon, failed to converge etc)
   HitNothing
 
-def raymarch (scene:Scene n) (ray:Ray) : RayMarchResult =
+def raymarch (scene:Scene n) (rayC:RayC) : RayMarchResult =
   -- czz: todo customize for adaptive raymarch
   maxIters = 100
   tol = 0.01
   startLength = 10.0 * tol  -- trying to escape the current surface
+  (ray, rayList) = rayC
   (rayOrigin, rayDir) = ray
   withState (10.0 * tol) \rayLength.
     boundedIter maxIters HitNothing \_.
       rayPos = rayOrigin + get rayLength .* rayDir
-      (obj, d) = sdScene scene $ rayPos -- RayC = (ray, rayList)
+      (obj, d) = sdScene scene rayPos rayC
       -- 0.9 ensures we come close to the surface but don't touch it
       rayLength := get rayLength + 0.9 * d
       case d < tol of
         False -> Continue
         True ->
-          surfNorm = calcNormal obj rayPos
+          surfNorm = calcNormal obj rayPos rayC
           case positiveProjection rayDir surfNorm of
             True ->
               -- Oops, we didn't escape the surface we're leaving..
@@ -459,8 +460,8 @@ def raymarch (scene:Scene n) (ray:Ray) : RayMarchResult =
                 PassiveObject _ surf -> HitObj (rayPos, rayDir) (surfNorm, surf)
                 Light _ _ radiance   -> HitLight radiance
 
-def rayDirectRadiance (scene:Scene n) (ray:Ray) : Radiance =
-  case raymarch scene ray of
+def rayDirectRadiance (scene:Scene n) (rayC:RayC) : Radiance =
+  case raymarch scene rayC of
     HitLight intensity -> intensity
     HitNothing -> zero
     HitObj _ _ -> zero
@@ -486,8 +487,10 @@ def sampleLightRadiance
           -- light on this far side of current surface
           fracSolidAngle = (relu $ dot dirToLight yHat) * sq hw / (pi * sq distToLight)
           outRay = (rayPos, dirToLight)
+          outRayList = rayTraceOctTreeSparse max_lod outRay
+          outRayC = (outRay, outRayList)
           coeff = fracSolidAngle * probReflection osurf inRay outRay
-          radiance += coeff .* rayDirectRadiance scene outRay
+          radiance += coeff .* (rayDirectRadiance scene outRayC)
 
 def trace (params:Params) (scene:Scene n) (initRay:Ray) (k:Key) : Color =
   noFilter = [1.0, 1.0, 1.0]
@@ -497,9 +500,9 @@ def trace (params:Params) (scene:Scene n) (initRay:Ray) (k:Key) : Color =
 
   yieldAccum (AddMonoid Float) \radiance.
     runState  noFilter \filter.
-     runState initRay  \ray.
+     runState initRayC  \rayC.
       boundedIter (getAt #maxBounces params) () \i.
-        case raymarch scene $ get ray of
+        case raymarch scene $ get rayC of
           HitNothing -> Done ()
           HitLight intensity ->
             if i == 0 then radiance += intensity   -- TODO: scale etc
@@ -507,7 +510,9 @@ def trace (params:Params) (scene:Scene n) (initRay:Ray) (k:Key) : Color =
           HitObj incidentRay osurf ->
             [k1, k2] = splitKey $ hash k i
             lightRadiance = sampleLightRadiance scene osurf incidentRay k1
-            ray    := sampleReflection osurf incidentRay k2
+            ray = sampleReflection osurf incidentRay k2
+            rayList = rayTraceOctTreeSparse max_lod ray
+            rayC := (ray, rayList)
             -- czz: todo cache reflection rays? 
             filter := surfaceFilter (get filter) (snd osurf)
             radiance += applyFilter (get filter) lightRadiance
