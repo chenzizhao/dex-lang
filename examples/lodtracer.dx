@@ -46,10 +46,6 @@ def thirdbit  (x:Word8) : Bool = W8ToB' $ x .&. (IToW8 4)
 
 def ixFraction (i:n) : Float = (IToF (ordinal i)) / (IToF ((size n) - 1))
 
--- :p for i:(Fin 10). ixFraction i
--- :p for i:(Fin 10). hslToRgb (ixFraction i) 1.0 0.5
--- :p W8ToB (IToW8 4)
-
 def intpow2 (power:Int) : Int = %shl 1 power
 
 
@@ -63,11 +59,10 @@ Distance = Float
 
 Ray = (Position & Direction)
 
---Octants = Directions=>Bool
 Octant = Fin 8 -- (Bool & Bool & Bool)  -- positive in x, y, or z
 
 LoD = Int
-max_lod = 7
+max_lod = 6
 
 -- czz: why doesn't this work? 
 -- def Voxel (numDivisions:Int) : Type =
@@ -104,26 +99,35 @@ def voxeltoBB (voxel: Voxel) : AABox =
            divSize * (IToF (zn + 1)) - 1.0]
   (lower, upper)
 
-def rayAABBIntersection (ray:Ray) (box:AABox) : Bool =
+def rayAABBIntersectionHelper (ray:Ray) (box:AABox) : (Float & Float) =
   ([pos_x, pos_y, pos_z], [dir_x,  dir_y,  dir_z ]) = ray
   ([low_x, low_y, low_z], [high_x, high_y, high_z]) = box
   (tx1, tx2) = ((low_x - pos_x) / dir_x, (high_x - pos_x) / dir_x)
   (ty1, ty2) = ((low_y - pos_y) / dir_y, (high_y - pos_y) / dir_y)
   (tz1, tz2) = ((low_z - pos_z) / dir_z, (high_z - pos_z) / dir_z)
-  txn = min tx1 tx2
-  txf = max tx1 tx2
-  tyn = min ty1 ty2
-  tyf = max ty1 ty2
-  tzn = min tz1 tz2
-  tzf = max tz1 tz2
+  (txn, txf) = min_and_max tx1 tx2
+  (tyn, tyf) = min_and_max ty1 ty2
+  (tzn, tzf) = min_and_max tz1 tz2
   tnear = max txn $ max tyn tzn
   tfar  = min txf $ min tyf tzf
+  (tfar, tnear)
+
+def rayAABBIntersection (ray:Ray) (box:AABox) : Bool =
+  (tfar, tnear) = rayAABBIntersectionHelper ray box
   tfar > tnear && tfar > 0.0
+
+def rayAABBIntersectionPos (ray:Ray) (box:AABox) : Position = 
+  (_, tnear) = rayAABBIntersectionHelper ray box
+  (ray_pos, ray_dir) = ray
+  ray_pos + tnear .* ray_dir
 
 def intersectsVoxel (ray:Ray) (voxel: Voxel) : Bool =
   box = voxeltoBB voxel
   rayAABBIntersection ray box
 
+def intersectsVoxelPos (ray:Ray) (voxel: Voxel) : Position =
+  box = voxeltoBB voxel
+  rayAABBIntersectionPos ray box
 
 '## Octtree intersection
 
@@ -184,7 +188,7 @@ rayvoxels = rayTraceOctTree max_lod ([0.1, 0.1, 0.1], [1.0, 1.0, 1.0])
 
 :p rayvoxels
 
--- czz WIP -- 
+-- czz WIP
 def test_sdf (pos:Position):Distance =
   -- return 0.0 if pos is on a sphere, 
   -- negative number if pos in sphere, 
@@ -194,11 +198,7 @@ def test_sdf (pos:Position):Distance =
   pos' : Position = pos - sphereOrigin
   max (length pos' - sphereRadius) 0.0
   
-
-Feature = (Fin 3)=>Float  -- also defined in nglod.dx
-In_t = (Fin 6)
-
-def posToDistance (pos:Position) (lod:LoD) : Distance =
+def sdfWrap (lod:LoD) (pos:Position) : Distance =
   -- input = concat' pos (posToFeature pos lod) 
   -- -- concat' should be the version with cast.
   -- wnb = wnb_sgds.((lod-1)@_) -- use appropriate WnB
@@ -212,22 +212,42 @@ def posToDistance (pos:Position) (lod:LoD) : Distance =
 -- rayVoxelsCache : (Fin numRays) => List Voxel = map rayTraceOctTree rays
 
 def voxelContainsSurface (voxel:Voxel) (ray:Ray) (sdf:Position->Distance) : Bool = 
-  -- todo 
-  -- ask: how does it work, fast?
+  -- to ask: how does it work, fast?
   -- without this function properly implemented, the octree is not sparse
-  True
-
-def voxelContainsSurface2 (voxel:Voxel) (ray:Ray) (sdf:Position->Distance) : Bool = 
-  -- czz: todo
-  -- idea: compute the further box-ray intersection point
-  -- idea: and then check whether the sdf is negative 
-  -- for now, just sample 8 points and evaluate them against sdf. 
-  sdf (voxelToCentrePosition voxel) <= 0.0
-  -- any for oct:Octant. 
-  --   subVoxel = childOctantToSubVoxel voxel oct
-  --   childPos = voxelToCentrePosition subVoxel
-  --   sdf childPos <= 0.0
   -- True
+  sdf (voxelToCentrePosition voxel) <= 0.0
+
+def rayTraceOctTreeSparse (maxLod:LoD) (ray:Ray) : List Voxel = 
+  (AsList _ voxels) = rayTraceOctTree maxLod ray
+  sdf = sdfWrap maxLod
+  condition = \v. voxelContainsSurface v ray sdf
+  filter condition voxels
+
+def inVoxelList (vCurr:Voxel) ((AsList n vs) : List Voxel) : Bool = 
+  case n == 0 of
+    True -> False
+    False -> anySat ((==) vCurr) vs
+
+def isStrictAfter (v1:Voxel) ((_, rayDir) : Ray) (v2:Voxel) : Bool = 
+  -- assume both v1 and v2 are intersected by ray
+  -- return True if v2 is after v1
+  --       False if overlaps or v2 is before v1
+  cpos1 = voxelToCentrePosition v1
+  cpos2 = voxelToCentrePosition v2
+  cVec = cpos2 - cpos1
+  (vdot cVec rayDir) > 0.
+
+def nextVoxelInDepthOrderedList (vCurr:Voxel) ((AsList n vs):List Voxel) (ray:Ray) : Maybe Voxel = 
+  case n == 0 of
+    True -> Nothing
+    False -> 
+      condition = isStrictAfter vCurr ray
+      (AsList nInds inds) = argFilter condition vs
+      case nInds == 0 of
+        True -> Nothing
+        False -> Just vs.(head inds)
+-- czz WIP -- 
+
 
 ---- Tests
 
@@ -399,6 +419,7 @@ data RayMarchResult =
   HitNothing
 
 def raymarch (scene:Scene n) (ray:Ray) : RayMarchResult =
+  -- czz: todo customize for adaptive raymarch
   maxIters = 100
   tol = 0.01
   startLength = 10.0 * tol  -- trying to escape the current surface
@@ -423,12 +444,6 @@ def raymarch (scene:Scene n) (ray:Ray) : RayMarchResult =
               Done $ case obj of
                 PassiveObject _ surf -> HitObj (rayPos, rayDir) (surfNorm, surf)
                 Light _ _ radiance   -> HitLight radiance
-
-
-def raymarch2 (scene:Scene n) (ray:Ray) : RayMarchResult =
--- adaptive raymarch
--- czz: todo
-  HitNothing
 
 def rayDirectRadiance (scene:Scene n) (ray:Ray) : Radiance =
   case raymarch scene ray of
@@ -522,8 +537,8 @@ whiteWallColor = [255.0, 239.0, 196.0] / 255.0
 blockColor     = [200.0, 200.0, 255.0] / 255.0
 
 objs1 = [ Light (0.1 .* yHat) 0.1 lightColor
-    , PassiveObject (Wall      xHat  0.15) (Matte whiteWallColor)
-    , PassiveObject (Wall (neg xHat) 0.15) (Matte whiteWallColor)
+    , PassiveObject (Wall      xHat  0.15) (Matte leftWallColor)
+    , PassiveObject (Wall (neg xHat) 0.15) (Matte rightWallColor)
     , PassiveObject (Wall      yHat  0.15) (Matte whiteWallColor)
     , PassiveObject (Wall (neg yHat) 0.15) (Matte whiteWallColor)
     , PassiveObject (Wall      zHat  0.15) (Matte whiteWallColor)
@@ -532,26 +547,7 @@ objs1 = [ Light (0.1 .* yHat) 0.1 lightColor
     -- , PassiveObject (Sphere [ 2.0,  2.0, -2.0] 1.5) (Mirror)
     ]
 
--- new stuffs
-(AsList _ vl) = rayvoxels
-:p vl
-
-objs2 = for i.
-  cpos = voxelToCentrePosition vl.i
-  vw = 0.5 * voxelWidth max_lod
-  color = hslToRgb (ixFraction i) 1.0 0.5
-  PassiveObject (Block  cpos [vw, vw, vw] 0.0) (Matte color)
-
--- raypos = [0.1, 0.1, 0.1]
--- info = for i.
---   cpos = voxelToCentrePosition vl.i
---   dist = sum $ sq $ cpos-raypos
---   (vl.i, cpos, dist)
--- :p info
-
-combl = (AsList _ objs1) <> (AsList _ objs2)
-(AsList _ cot) = combl
-theScene = MkScene cot
+theScene = MkScene objs1
 
 defaultParams = { numSamples = 1
                 , maxBounces = 2
@@ -568,72 +564,6 @@ camera = if dex_test_mode ()
            then defaultCamera |> setAt #numPix 10
            else defaultCamera
 
--- %time
--- (MkImage _ _ image) = takePicture params theScene camera
--- :html imshow image
-
-
--- :html imseqshow xmovieflat
--- pngsToSavedGif 1 (map imgToPng xmovieflat) "gwg"
-
-
--- construct a sphere of lowest level voxels
-
-camera1 = { numPix     = 400
-          , pos        = 1.0 .* zHat
-          , halfWidth  = 0.03
-          , sensorDist = 0.1 }
-camera1_pos = 1.0 .* zHat
-
-n = 150
-rays = cameraRays n camera1
-rootKey = newKey 0
-
 %time
-lowestLevelVoxels = 
-  for i j.
-    pixKey = if getAt #shareSeed defaultParams
-      then rootKey
-      else ixkey (ixkey rootKey i) j
-    ray = rays.i.j pixKey  
-    (AsList _ rayVoxels) = rayTraceOctTree max_lod ray
-    condition = \voxel. voxelContainsSurface2 voxel ray test_sdf 
-    (AsList n' filteredRayVoxels) = filter condition rayVoxels
-    if n'== 0 
-      then (AsList 0 [])
-      else (AsList 1 [head filteredRayVoxels])
-
-%time
-flattenedLowestLevelVoxels = concat for i. concat lowestLevelVoxels.i
-(AsList _ vl3) = flattenedLowestLevelVoxels
-
-minDist = minimum for i. 
-  cpos = voxelToCentrePosition vl3.i
-  length $ cpos - camera1_pos
-
-maxDist = maximum for i. 
-  cpos = voxelToCentrePosition vl3.i
-  length $ cpos - camera1_pos
-
-:p (minDist, maxDist)
-
-def myNormalize (x:Float) (min:Float) (max:Float) : Float = 
-  (x-min) / (max-min)
-
-objs3 = for i.
-  cpos = voxelToCentrePosition vl3.i
-  vw = 0.5 * voxelWidth max_lod
-  camera_voxel_dist = length $ cpos - camera1_pos
-  h = myNormalize camera_voxel_dist minDist maxDist
-  color = hslToRgb h 1.0 0.5
-  PassiveObject (Block  cpos [vw, vw, vw] 0.0) (Matte color)
-
-:t objs3
-
-combl3 = (AsList _ objs1) <> (AsList _ objs3)
-(AsList _ cot3) = combl3
-theScene3 = MkScene cot3
-
-%time
-(MkImage _ _ image3) = takePicture params theScene3 camera
-:html imshow image3
+(MkImage _ _ image) = takePicture params theScene camera
+:html imshow image
