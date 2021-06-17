@@ -256,7 +256,6 @@ def posInRootVoxel (pos:Position) : Bool =
 
 def leafVoxel (pos:Position) : Voxel = 
   -- assume pos is in root voxel
-  -- czz: use fold and other utils
   lods = max_lod + 1
   update = \ _:(Fin lods) v:Voxel.
     childOct = subVoxelPosToChildOctant v pos
@@ -420,24 +419,18 @@ def sdObject (pos:Position) (obj:Object) ((ray, rayList): RayC): Distance =
         max (length pos' - r) 0.0
       ImplicitVolume _ ->
         posInf = (1.0/0.0)
-        -- distance = if not (posInRootVoxel pos) 
-        --   then posInf
-        --   else
-        --     posVoxel = leafVoxel pos
-        --     if (inVoxelList posVoxel rayList) 
-        --       then (sdfWrap max_lod pos)  -- max_lod here should be adjustable
-        --       else 
-        --         nextVoxel = nextVoxelInDepthOrderedList posVoxel rayList ray
-        --         if nextVoxel == invalid_voxel
-        --           then posInf
-        --           else (intersectsVoxelDistance (pos, rayDir) nextVoxel)
-        -- -- todo: the following check may be unnecessary, return distance instead
-        -- nextPos = pos + 0.9 .* distance .* rayDir
-        -- if not (posInRootVoxel nextPos)
-        --   then posInf
-        --   else distance
-        posInf
-
+        distance = if not (posInRootVoxel pos)
+          then posInf
+          else
+            posVoxel = leafVoxel pos
+            if (inVoxelList posVoxel rayList) 
+              then (sdfWrap max_lod pos)  -- max_lod here should be adjustable
+              else 
+                nextVoxel = nextVoxelInDepthOrderedList posVoxel rayList ray
+                if nextVoxel == invalid_voxel
+                  then posInf
+                  else (intersectsVoxelDistance (pos, rayDir) nextVoxel)
+        distance
     Light squarePos hw _ ->
       pos' = pos - squarePos
       halfWidths = [hw, 0.01, hw]
@@ -448,9 +441,17 @@ def sdScene (scene:Scene n) (pos:Position) (rayC: RayC): (Object & Distance) =
   (i, d) = minimumBy snd $ for i. (i, sdObject pos objs.i rayC)
   (objs.i, d)
 
+def addAt (_:Eq n) ?=> (_:VSpace a) ?=> (xs:n=>a) (i:n) (x:a) : n=>a =
+  for j. case i == j of
+    True  -> xs.j + x
+    False -> xs.j
+
+def gradNumerical (n:Int) ?-> (f:Vec n -> Float) (xs:Vec n) : Vec n =
+  eps = 0.0001
+  for i. (f (addAt xs i eps) - f (addAt xs i (neg eps))) / (2.0 * eps)
+
 def calcNormal (obj:Object) (pos:Position) (rayC: RayC): Direction =
-  -- czz: todo how does this work with caching and stuff?
-  normalize (grad (\pos. sdObject pos obj rayC) pos)
+  normalize (gradNumerical (\p. sdObject p obj rayC) pos)
 
 data RayMarchResult =
   -- incident ray, surface normal, surface properties
@@ -596,53 +597,16 @@ objs1 = [ Light (0.1 .* yHat) 0.1 lightColor
     -- , PassiveObject (Sphere [(0.03), (-0.05), (0.01)] 0.05) (Matte (0.7.* blockColor))
     -- implicit object with id=0 is the test sphere. 
     , PassiveObject (ImplicitVolume  0)    (Matte testObjColor)
-    -- , PassiveObject (Block  [ 1.0, -1.6,  1.2] [0.6, 0.8, 0.6] 0.5) (Matte blockColor)
-    -- , PassiveObject (Sphere [-1.0, -1.2,  0.2] 0.8) (Matte (0.7.* whiteWallColor))
-    -- , PassiveObject (Sphere [ 2.0,  2.0, -2.0] 1.5) (Mirror)
     ]
 
 defaultParams = { numSamples = 1
                 , maxBounces = 2
                 , shareSeed  = True }
 
-defaultCamera = { numPix     = 100 -- 400
+defaultCamera = { numPix     = 50 -- 400
                 , pos        = 1.0 .* zHat
                 , halfWidth  = 0.3
                 , sensorDist = 1.5 }
-
--- numPix = 100
--- 
--- def scatterImplicitObjectSurface (rays: (Fin numPix) => (Fin numPix) =>(Key->Ray)) : List Object = 
---   key = newKey 0
---   yieldAccum (ListMonoid Object) \list.
---     for i j.
---       ray = rays.i.j key
---       (AsList n rayVoxels) = rayTraceOctTreeSparse ray
---       if n > 0 then 
---         v = head rayVoxels
---         cpos = voxelToCentrePosition v
---         vw = 0.5 * voxelWidth max_lod
---         obj = PassiveObject (Block  cpos [vw, vw, vw] 0.0) (Matte blockColor)
---         append list obj
--- 
--- def scatterHitMat (rays: (Fin numPix) => (Fin numPix) =>(Key->Ray)) : (Fin numPix) => (Fin numPix) => Float = 
---   key = newKey 0
---   for i j.
---     ray = rays.i.j key
---     (AsList n rayVoxels) = rayTraceOctTreeSparse ray
---     IToF n
--- 
--- rays = cameraRays numPix defaultCamera
--- -- :html matshow (scatterHitMat rays)
--- 
--- objs2List = scatterImplicitObjectSurface rays
--- (AsList numObjs2 _) = objs2List
--- :p numObjs2
--- 
--- objs12List = (AsList _ objs1) <> objs2List
--- (AsList _ objs12) = objs12List
-
--- theScene = MkScene objs12
 
 theScene = MkScene objs1
 
