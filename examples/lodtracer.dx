@@ -46,8 +46,6 @@ def thirdbit  (x:Word8) : Bool = W8ToB' $ x .&. (IToW8 4)
 
 def ixFraction (i:n) : Float = (IToF (ordinal i)) / (IToF ((size n) - 1))
 
-def intpow2 (power:Int) : Int = %shl 1 power
-
 
 '## Types
 
@@ -62,7 +60,7 @@ Ray = (Position & Direction)
 Octant = Fin 8 -- (Bool & Bool & Bool)  -- positive in x, y, or z
 
 LoD = Int
-max_lod = 7
+max_lod = 6
 
 -- czz: why doesn't this work? 
 -- def Voxel (numDivisions:Int) : Type =
@@ -211,18 +209,23 @@ def sdfWrap (lod:LoD) (pos:Position) : Distance =
 -- caching V_l (r)
 -- rayVoxelsCache : (Fin numRays) => List Voxel = map rayTraceOctTree rays
 
+
+-- @noinline -- not impl'ed Imp654
 def voxelContainsSurface (voxel:Voxel) (ray:Ray) (sdf:Position->Distance) : Bool = 
   -- to ask: how does it work, fast?
   -- without this function properly implemented, the octree is not sparse
   -- True
+
   sdf (voxelToCentrePosition voxel) <= 0.0
 
+-- @noinline -- should't be compiling ptr literals src/lib/JIT.hs: 683
 def rayTraceOctTreeSparse (ray:Ray) : List Voxel = 
   (AsList _ voxels) = rayTraceOctTree ray
   sdf = sdfWrap max_lod
   condition = \v. voxelContainsSurface v ray sdf
   filter condition voxels
 
+-- @noinline -- not impl'ed Imp654
 def inVoxelList (vCurr:Voxel) ((AsList n vs) : List Voxel) : Bool = 
   if n==0 
     then False 
@@ -241,6 +244,7 @@ def isStrictAfter (v1:Voxel) ((_, rayDir) : Ray) (v2:Voxel) : Bool =
 
 invalid_voxel : Voxel = (0,0,0,(-1))
 
+-- @noinline -- not impl'ed Imp.hs 654
 def nextVoxelInDepthOrderedList (vCurr:Voxel) ((AsList n vs):List Voxel) (ray:Ray) : Voxel =
   if n == 0
     then invalid_voxel
@@ -251,8 +255,10 @@ def nextVoxelInDepthOrderedList (vCurr:Voxel) ((AsList n vs):List Voxel) (ray:Ra
         then invalid_voxel
         else vs.(head inds)
 
+@noinline
 def posInRootVoxel (pos:Position) : Bool = 
-  all for d. pos.d <= 1.0 && pos.d >= (-1.0) 
+  pos.(0@_) <= 1.0 && pos.(0@_) >= (-1.0) && pos.(1@_) <= 1.0 && pos.(1@_) >= (-1.0) && pos.(2@_) <= 1.0 && pos.(2@_) >= (-1.0) 
+  -- all for d. pos.d <= 1.0 && pos.d >= (-1.0) -- this doesn't work BUG?
 
 def leafVoxel (pos:Position) : Voxel = 
   -- assume pos is in root voxel
@@ -406,6 +412,8 @@ def surfaceFilter (filter:Filter) (surf:Surface) : Filter =
     Matte color -> for i. filter.i * color.i
     Mirror      -> filter
 
+
+-- @noinline
 def sdObject (pos:Position) (obj:Object) ((ray, rayList): RayC): Distance =
   (rayPos, rayDir) = ray
   case obj of
@@ -423,13 +431,17 @@ def sdObject (pos:Position) (obj:Object) ((ray, rayList): RayC): Distance =
           then posInf
           else
             posVoxel = leafVoxel pos
-            if (inVoxelList posVoxel rayList) 
+            if (inVoxelList posVoxel rayList) -- BAD Projection error from PPrint grad BUG?
+            -- if False -- debug
               then (sdfWrap max_lod pos)  -- max_lod here should be adjustable
+              -- else posInf -- debug
               else 
                 nextVoxel = nextVoxelInDepthOrderedList posVoxel rayList ray
+                -- nextVoxel = invalid_voxel -- debug
                 if nextVoxel == invalid_voxel
                   then posInf
                   else (intersectsVoxelDistance (pos, rayDir) nextVoxel)
+                  -- else posInf -- debug
         distance
     Light squarePos hw _ ->
       pos' = pos - squarePos
@@ -450,8 +462,10 @@ def gradNumerical (n:Int) ?-> (f:Vec n -> Float) (xs:Vec n) : Vec n =
   eps = 0.0001
   for i. (f (addAt xs i eps) - f (addAt xs i (neg eps))) / (2.0 * eps)
 
+-- @noinline
 def calcNormal (obj:Object) (pos:Position) (rayC: RayC): Direction =
   normalize (gradNumerical (\p. sdObject p obj rayC) pos)
+  -- normalize (grad (\p. sdObject p obj rayC) pos)
 
 data RayMarchResult =
   -- incident ray, surface normal, surface properties
@@ -603,7 +617,7 @@ defaultParams = { numSamples = 1
                 , maxBounces = 2
                 , shareSeed  = True }
 
-defaultCamera = { numPix     = 50 -- 400
+defaultCamera = { numPix     = 100 -- 400
                 , pos        = 1.0 .* zHat
                 , halfWidth  = 0.3
                 , sensorDist = 1.5 }
