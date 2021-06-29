@@ -192,13 +192,12 @@ def rayTraceOctTreeSparse (ray:Ray) : List Voxel =
   condition = \v. voxelContainsSurface v ray sdf
   filter condition voxels
 
-@noinline
-def posInRootVoxel (pos:Position) : Bool = 
-  pos.(0@_) <= 1.0 && pos.(0@_) >= (-1.0) && pos.(1@_) <= 1.0 && pos.(1@_) >= (-1.0) && pos.(2@_) <= 1.0 && pos.(2@_) >= (-1.0) 
-  -- all for d. pos.d <= 1.0 && pos.d >= (-1.0) -- this doesn't work BUG?
+def posInVoxel (pos:Position) (voxel:Voxel) : Bool = 
+  (lowerPos, upperPos) = voxeltoBB voxel
+  all for d. lowerPos.d <= pos.d && pos.d<= upperPos.d
 
 def leafVoxel (pos:Position) : Voxel = 
-  case posInRootVoxel pos of
+  case posInVoxel pos top_voxel of
     False -> outside_root_voxel
     True -> 
       lods = max_lod -- debug
@@ -257,44 +256,29 @@ def gradNumerical (n:Int) ?-> (f:Vec n -> Float) (xs:Vec n) : Vec n =
 
 posInf = (1.0/0.0)
 
-def sdAdaptiveStep (rayPos:Position) ((ray, rayList):RayC) (lastReadVoxelInd:Int)
-  : (Distance & Int) = 
-  (rayOrigin, rayDir) = ray
-  posVoxel = leafVoxel rayPos
-  (AsList n vs) = rayList
-  case anySat ((==) posVoxel) vs of
-    True ->
-      d = (sdfWrap max_lod rayPos)*0.99
-      (d, lastReadVoxelInd)
-    False ->
-      attemptVoxelInd = lastReadVoxelInd + 1
-      case attemptVoxelInd >= n of
-        True -> (posInf, lastReadVoxelInd)
-        False -> 
-          nextVoxel = vs.(attemptVoxelInd@_)
-          d = (intersectsVoxelDistance (rayPos, rayDir) nextVoxel) * 1.000001
-          (d, attemptVoxelInd)
-          -- ((sdfWrap max_lod rayPos)*0.9, lastReadVoxelInd) -- debug
-
 def adaptiveSphereTrace (rayC:RayC) : Color = 
-  maxIters = 1000
+  maxIters = 100
   tolerance = 0.001
-  ((rayOrigin, rayDir), _) = rayC
-  dist = yieldState 0.01 \rayLength.
-    withState (-1) \lastReadVoxelInd.
-      boundedIter maxIters zero \_.
-        rayPos = rayOrigin + (get rayLength) .* rayDir
-        (d, ind) = sdAdaptiveStep rayPos rayC (get lastReadVoxelInd)
-        rayLength := get rayLength + d
-        lastReadVoxelInd := ind
-        case d == posInf || d < tolerance of
-          True -> Done ()
+  (ray, (AsList n vs)) = rayC
+  (rayOrigin, rayDir) = ray
+  rayLength = yieldState posInf \rayLength.
+    boundedIter n posInf \idxvoxel.
+      currVoxel = vs.(idxvoxel@_)
+      rayLength := intersectsVoxelDistance ray currVoxel + 0.01
+      step = boundedIter maxIters posInf \_. 
+        rayPos = rayOrigin + rayDir *. (get rayLength)
+        step = sdfWrap max_lod rayPos
+        rayLength := (get rayLength) + step*0.99
+        case step < tolerance of
+          True -> Done step
           False -> Continue
-  rayPosOnSurf = rayOrigin + rayDir *. dist
+      case step == posInf of
+        True -> Continue
+        False -> Done zero -- this shouldn't affect anything
+  rayPosOnSurf = rayOrigin + rayDir *. rayLength
   -- surfNorm = (gradNumerical \pos. sdfWrap max_lod pos) rayPosOnSurf 
   surfNorm = (grad \pos. sdfWrap max_lod pos) rayPosOnSurf 
   surfNorm 
-
 
 ' ### Define the scene and render it
 
@@ -304,7 +288,7 @@ defaultCamera = { numPix     = 100 -- 400
                 , sensorDist = 1.5 }
 
 %time
-rayvoxels : (Fin 200)=>(Fin 200)=>RayC = cameraRays defaultCamera
+rayvoxels : (Fin 100)=>(Fin 100)=>RayC = cameraRays defaultCamera
 
 %time
 canvas = for i j. adaptiveSphereTrace rayvoxels.i.j
