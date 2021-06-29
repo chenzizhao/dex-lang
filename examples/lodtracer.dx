@@ -246,6 +246,15 @@ def cameraRays (camera:Camera) : Fin n => Fin n => RayC =
     rayList = rayTraceOctTreeSparse ray
     (ray, rayList)
 
+def addAt (_:Eq n) ?=> (_:VSpace a) ?=> (xs:n=>a) (i:n) (x:a) : n=>a =
+  for j. case i == j of
+    True  -> xs.j + x
+    False -> xs.j
+
+def gradNumerical (n:Int) ?-> (f:Vec n -> Float) (xs:Vec n) : Vec n =
+  eps = 0.0001
+  for i. (f (addAt xs i eps) - f (addAt xs i (neg eps))) / (2.0 * eps)
+
 posInf = (1.0/0.0)
 
 def sdAdaptiveStep (rayPos:Position) ((ray, rayList):RayC) (lastReadVoxelInd:Int)
@@ -255,7 +264,7 @@ def sdAdaptiveStep (rayPos:Position) ((ray, rayList):RayC) (lastReadVoxelInd:Int
   (AsList n vs) = rayList
   case anySat ((==) posVoxel) vs of
     True ->
-      d = (sdfWrap max_lod rayPos)*0.9
+      d = (sdfWrap max_lod rayPos)*0.99
       (d, lastReadVoxelInd)
     False ->
       attemptVoxelInd = lastReadVoxelInd + 1
@@ -263,7 +272,7 @@ def sdAdaptiveStep (rayPos:Position) ((ray, rayList):RayC) (lastReadVoxelInd:Int
         True -> (posInf, lastReadVoxelInd)
         False -> 
           nextVoxel = vs.(attemptVoxelInd@_)
-          d = (intersectsVoxelDistance (rayPos, rayDir) nextVoxel) * 1.01
+          d = (intersectsVoxelDistance (rayPos, rayDir) nextVoxel) * 1.000001
           (d, attemptVoxelInd)
           -- ((sdfWrap max_lod rayPos)*0.9, lastReadVoxelInd) -- debug
 
@@ -281,9 +290,11 @@ def adaptiveSphereTrace (rayC:RayC) : Color =
         case d == posInf || d < tolerance of
           True -> Done ()
           False -> Continue
-  dist' = if dist == posInf then zero else dist
-  surfNorm = hslToRgb (dist'*20.) 1.0 0.5
-  surfNorm
+  rayPosOnSurf = rayOrigin + rayDir *. dist
+  -- surfNorm = (gradNumerical \pos. sdfWrap max_lod pos) rayPosOnSurf 
+  surfNorm = (grad \pos. sdfWrap max_lod pos) rayPosOnSurf 
+  surfNorm 
+
 
 ' ### Define the scene and render it
 
@@ -293,7 +304,7 @@ defaultCamera = { numPix     = 100 -- 400
                 , sensorDist = 1.5 }
 
 %time
-rayvoxels : (Fin 100)=>(Fin 100)=>RayC = cameraRays defaultCamera
+rayvoxels : (Fin 200)=>(Fin 200)=>RayC = cameraRays defaultCamera
 
 %time
 canvas = for i j. adaptiveSphereTrace rayvoxels.i.j
