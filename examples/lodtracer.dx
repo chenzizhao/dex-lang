@@ -5,17 +5,6 @@ import plot
 
 def length    (x: d=>Float) : Float = sqrt $ sum for i. sq x.i
 
-def pngsToSavedGif (delay:Int) (pngs:t=>Png) (outFileName:String) : Gif =
-  unsafeIO \().
-    withTempFiles \pngFiles.
-      for i.
-        writeFile pngFiles.i pngs.i
-      shellOut $
-        "convert" <> " -delay " <> show delay <> " " <>
-        concat (for i. "png:" <> pngFiles.i <> " ") <>
-        "gif:" <> outFileName <> ".gif"
-
-
 def hue2rgb (p:Float) (q:Float) (t:Float) : Float = 
   t = t - floor t
   if t < (1.0/6.0)
@@ -44,33 +33,24 @@ def firstbit  (x:Word8) : Bool = W8ToB' $ x .&. (IToW8 1)
 def secondbit (x:Word8) : Bool = W8ToB' $ x .&. (IToW8 2)
 def thirdbit  (x:Word8) : Bool = W8ToB' $ x .&. (IToW8 4)
 
-def ixFraction (i:n) : Float = (IToF (ordinal i)) / (IToF ((size n) - 1))
-
-
 '## Types
 
 def Vec (n:Int) : Type = Fin n => Float
-
 Position  = Vec 3
 Direction = Vec 3  -- Should be normalized. TODO: use a newtype wrapper
 Distance = Float
-
 Ray = (Position & Direction)
-
 Octant = Fin 8 -- (Bool & Bool & Bool)  -- positive in x, y, or z
 
 LoD = Int
-max_lod = 6
+max_lod = 5
 
--- czz: why doesn't this work? 
--- def Voxel (numDivisions:Int) : Type =
---  (Fin numDivisions & Fin numDivisions & Fin numDivisions)
-
-def Voxel : Type =
-  (Int & Int & Int & LoD)  -- Sad!
+def Voxel : Type = (Int & Int & Int & LoD)  -- Sad!
+top_voxel : Voxel = (0,0,0,0) -- todo: put it somewhere else
+invalid_voxel : Voxel = (0,0,0,(-1))
+outside_root_voxel : Voxel = (0,0,0,(-2))
 
 def AABox : Type = (Position & Position)  -- opposite corners
-
 
 '## Bounding box utilities
 
@@ -175,8 +155,6 @@ def subdivide (ray:Ray) ((AsList _ voxels) : List Voxel) : List Voxel =
       (AsList _ childOcts) = orderedChildren ray voxels.t
       list += AsList _ for i. childOctantToSubVoxel voxels.t childOcts.i
 
-top_voxel : Voxel = (0, 0, 0, 0) -- todo: put it somewhere else
-
 def rayTraceOctTree (ray:Ray) : List Voxel = 
   init = AsList 1 [top_voxel]
   yieldState init \ls_ref.
@@ -214,39 +192,6 @@ def rayTraceOctTreeSparse (ray:Ray) : List Voxel =
   condition = \v. voxelContainsSurface v ray sdf
   filter condition voxels
 
--- @noinline -- not impl'ed Imp654
-def inVoxelList (vCurr:Voxel) ((AsList n vs) : List Voxel) : Bool = 
-  anySat ((==) vCurr) vs
-
-def isStrictAfter (v1:Voxel) ((_, rayDir) : Ray) (v2:Voxel) : Bool = 
-  -- assume both v1 and v2 are intersected by ray
-  -- return True if v2 is after v1
-  --       False if overlaps or v2 is before v1
-  (x1, y1, z1, _) = v1
-  (x2, y2, z2, _) = v2
-  pos1 = map IToF [x1, y1, z1]
-  pos2 = map IToF [x2, y2, z2]
-  vDir = pos2 - pos1
-  (vdot vDir rayDir) > 0.
-
-invalid_voxel : Voxel = (0,0,0,(-1))
-outside_root_voxel : Voxel = (0,0,0,(-2))
-
-def nextVoxelInDepthOrderedList (vCurr:Voxel) ((AsList n vs):List Voxel) (ray:Ray) : Voxel =
-  if n == 0
-    then invalid_voxel
-    else 
-      if vCurr == outside_root_voxel
-        then head vs
-        else
-          condition = isStrictAfter vCurr ray
-          (AsList nInds inds) = argFilter condition vs
-          if nInds == 0
-            then invalid_voxel
-            else vs.(head inds)
-
-
-
 @noinline
 def posInRootVoxel (pos:Position) : Bool = 
   pos.(0@_) <= 1.0 && pos.(0@_) >= (-1.0) && pos.(1@_) <= 1.0 && pos.(1@_) >= (-1.0) && pos.(2@_) <= 1.0 && pos.(2@_) >= (-1.0) 
@@ -256,13 +201,11 @@ def leafVoxel (pos:Position) : Voxel =
   case posInRootVoxel pos of
     False -> outside_root_voxel
     True -> 
-      lods = max_lod + 1
+      lods = max_lod -- debug
       update = \ _:(Fin lods) v:Voxel.
         childOct = subVoxelPosToChildOctant v pos
         childOctantToSubVoxel v childOct
       fold top_voxel update
-
-
 
 ---- Tests
 
@@ -273,11 +216,7 @@ def leafVoxel (pos:Position) : Voxel =
 
 '## Raytracer for debugging
 
-def relu (x:Float) : Float = max x 0.0
 def normalize (x: d=>Float) : d=>Float = x / (length x)
-def directionAndLength (x: d=>Float) : (d=>Float & Float) =
-  l = length x
-  (x / (length x), l)
 
 -- move this somewhere else
 xHat : Vec 3 = [1., 0., 0.]
@@ -286,7 +225,6 @@ zHat : Vec 3 = [0., 0., 1.]
 
 RayC = (Ray & (List Voxel))
 
-
 -- Assumes we're looking towards -z.
 Camera =
   { numPix     : Int
@@ -294,10 +232,7 @@ Camera =
   & halfWidth  : Float     -- sensor half-width
   & sensorDist : Float }   -- pinhole-sensor distance
 
--- TODO: might be better with an anonymous dependent pair for the result
 def cameraRays (camera:Camera) : Fin n => Fin n => RayC =
-  -- images indexed from top-left
-  -- n = getAt #numPix camera
   halfWidth = getAt #halfWidth camera
   pixHalfWidth = halfWidth / IToF n
   ys = reverse $ linspace (Fin n) (neg halfWidth) halfWidth
@@ -313,41 +248,42 @@ def cameraRays (camera:Camera) : Fin n => Fin n => RayC =
 
 posInf = (1.0/0.0)
 
-
-def sdAdaptive (rayPos:Position) ((ray, rayList):RayC)
-  : Distance = 
+def sdAdaptiveStep (rayPos:Position) ((ray, rayList):RayC) (lastReadVoxelInd:Int)
+  : (Distance & Int) = 
   (rayOrigin, rayDir) = ray
   posVoxel = leafVoxel rayPos
-  if inVoxelList posVoxel rayList
-    then (sdfWrap max_lod rayPos)*0.9
-    else
-      nextVoxel = nextVoxelInDepthOrderedList posVoxel rayList ray 
-      if nextVoxel == invalid_voxel
-        then posInf
-        -- todo prevvoxel
-        else (intersectsVoxelDistance (rayPos, rayDir) nextVoxel)+0.001
+  (AsList n vs) = rayList
+  case anySat ((==) posVoxel) vs of
+    True ->
+      d = (sdfWrap max_lod rayPos)*0.9
+      (d, lastReadVoxelInd)
+    False ->
+      attemptVoxelInd = lastReadVoxelInd + 1
+      case attemptVoxelInd >= n of
+        True -> (posInf, lastReadVoxelInd)
+        False -> 
+          nextVoxel = vs.(attemptVoxelInd@_)
+          d = (intersectsVoxelDistance (rayPos, rayDir) nextVoxel) * 1.01
+          (d, attemptVoxelInd)
+          -- ((sdfWrap max_lod rayPos)*0.9, lastReadVoxelInd) -- debug
 
 def adaptiveSphereTrace (rayC:RayC) : Color = 
-  maxIters = 100
+  maxIters = 1000
   tolerance = 0.001
-  (ray, rayList) = rayC
-  (rayOrigin, rayDir) = ray
-  (AsList vn vs) = rayList
-  withState (0.01)\(rayLength).
-    boundedIter maxIters zero \_.
-      rayPos = rayOrigin + get rayLength .* rayDir
-      d = sdAdaptive rayPos rayC
-      rayLength := get rayLength + d
-      case d == posInf of 
-        True -> Done zero
-        False -> 
-          case d > tolerance of 
-            True -> Continue
-            False -> 
-              -- surfNorm = calcNormalImplicit rayPos rayC -- todo
-              h = (get rayLength) * 20.
-              surfNorm = hslToRgb h 1.0 0.5
-              Done $ surfNorm
+  ((rayOrigin, rayDir), _) = rayC
+  dist = yieldState 0.01 \rayLength.
+    withState (-1) \lastReadVoxelInd.
+      boundedIter maxIters zero \_.
+        rayPos = rayOrigin + (get rayLength) .* rayDir
+        (d, ind) = sdAdaptiveStep rayPos rayC (get lastReadVoxelInd)
+        rayLength := get rayLength + d
+        lastReadVoxelInd := ind
+        case d == posInf || d < tolerance of
+          True -> Done ()
+          False -> Continue
+  dist' = if dist == posInf then zero else dist
+  surfNorm = hslToRgb (dist'*20.) 1.0 0.5
+  surfNorm
 
 ' ### Define the scene and render it
 
