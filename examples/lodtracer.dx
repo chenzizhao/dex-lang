@@ -405,8 +405,8 @@ def sdfWrap (lod:LoD) (pos:Position) : Distance =
   -- wnb = wnb_sgds.((lod-1)@_) -- use appropriate WnB
   -- -- wnb_sgds is also a global cache / trained in nglod.dx
   -- mlp input wnb
-  -- dilloMLP pos
-  test_sdf pos
+  dilloMLP pos
+  -- test_sdf pos
 
 -- @noinline -- not impl'ed Imp654
 def voxelContainsSurface (voxel:Voxel) (ray:Ray) (sdf:Position->Distance) : Bool = 
@@ -466,17 +466,21 @@ Camera =
   & sensorDist : Float }   -- pinhole-sensor distance
 
 def cameraRays (camera:Camera) : Fin n => Fin n => Ray =
-  halfWidth = getAt #halfWidth camera
-  pixHalfWidth = halfWidth / IToF n
-  ys = reverse $ linspace (Fin n) (neg halfWidth) halfWidth
-  xs =           linspace (Fin n) (neg halfWidth) halfWidth
-  for i j.
-    x = xs.j
-    y = ys.i
-    rayPos = getAt #pos camera
-    rayDir = normalize [x, y, neg (getAt #sensorDist camera)]
-    (rayPos, rayDir)
+  -- halfWidth = getAt #halfWidth camera
+  -- pixHalfWidth = halfWidth / IToF n
+  -- ys = reverse $ linspace (Fin n) (neg halfWidth) halfWidth
+  -- xs =           linspace (Fin n) (neg halfWidth) halfWidth
+  -- for i j.
+  --   x = xs.j
+  --   y = ys.i
+  --   rayPos = getAt #pos camera
+  --   rayDir = normalize [x, y, neg (getAt #sensorDist camera)]
+  --   (rayPos, rayDir)
   -- diff code for dillo
+  for x y.
+    rx = 2. * (IToF (ordinal x)) / IToF (n) - 1.0
+    ry = 2. * (IToF (ordinal y)) / IToF (n) - 1.0
+    ([rx, ry, -1.], [0., 0., 1.])
 
 def cameraRayCs (camera:Camera) : Fin n => Fin n => RayC = 
   rays = cameraRays camera
@@ -557,13 +561,13 @@ defaultCamera = { numPix     = 100 -- 400
 
 -- full octree intersection
 %time
-rayvoxels : (Fin 200)=>(Fin 200)=>RayC = cameraRayCs defaultCamera
+rayvoxels : (Fin 100)=>(Fin 100)=>RayC = cameraRayCs defaultCamera
 %time
 img1 = for i j. adaptiveSphereTrace rayvoxels.i.j
 
 -- basic sphere trace
 %time
-rays : (Fin 200) => (Fin 200) => Ray = cameraRays defaultCamera
+rays : (Fin 100) => (Fin 100) => Ray = cameraRays defaultCamera
 %time
 img2 = for i j. basicSphereTrace rays.i.j
 
