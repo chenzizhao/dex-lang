@@ -43,10 +43,10 @@ Ray = (Position & Direction)
 Octant = Fin 8 -- (Bool & Bool & Bool)  -- positive in x, y, or z
 
 LoD = Int
-max_lod = 5
+max_lod = 4
 
 def Voxel : Type = (Int & Int & Int & LoD)  -- Sad!
-top_voxel : Voxel = (0,0,0,0) -- todo: put it somewhere else
+top_voxel : Voxel = (0,0,0,0)
 invalid_voxel : Voxel = (0,0,0,(-1))
 outside_root_voxel : Voxel = (0,0,0,(-2))
 
@@ -90,22 +90,18 @@ def rayAABBIntersectionHelper (ray:Ray) (box:AABox) : (Float & Float) =
   tfar  = min txf $ min tyf tzf
   (tfar, tnear)
 
-def rayAABBIntersection (ray:Ray) (box:AABox) : Bool =
+-- API
+def intersectsVoxel (ray:Ray) (voxel: Voxel) : Bool =
+  box = voxeltoBB voxel
   (tfar, tnear) = rayAABBIntersectionHelper ray box
   tfar > tnear && tfar > 0.0
 
-def rayAABBIntersectionDistance (ray:Ray) (box:AABox) : Distance = 
+-- API
+def intersectsVoxelDistance (ray:Ray) (voxel: Voxel) : Distance =
+  box = voxeltoBB voxel
   (_, tnear) = rayAABBIntersectionHelper ray box
   (_, ray_dir) = ray
   tnear * (length ray_dir)
-
-def intersectsVoxel (ray:Ray) (voxel: Voxel) : Bool =
-  box = voxeltoBB voxel
-  rayAABBIntersection ray box
-
-def intersectsVoxelDistance (ray:Ray) (voxel: Voxel) : Distance =
-  box = voxeltoBB voxel
-  rayAABBIntersectionDistance ray box
 
 '## Octtree intersection
 
@@ -169,13 +165,15 @@ def test_sdf (pos:Position):Distance =
   sphereRadius : Float = 0.05
   pos' : Position = pos - sphereOrigin
   max (length pos' - sphereRadius) 0.0
-  
+
+-- API
 def sdfWrap (lod:LoD) (pos:Position) : Distance =
   -- input = concat' pos (posToFeature pos lod) 
   -- -- concat' should be the version with cast.
   -- wnb = wnb_sgds.((lod-1)@_) -- use appropriate WnB
   -- -- wnb_sgds is also a global cache / trained in nglod.dx
   -- mlp input wnb
+  -- dilloMLP pos
   test_sdf pos
 
 -- @noinline -- not impl'ed Imp654
@@ -185,6 +183,7 @@ def voxelContainsSurface (voxel:Voxel) (ray:Ray) (sdf:Position->Distance) : Bool
   w = voxelWidth lod
   (abs d < (sqrt(3.) * w /2.))
 
+-- API
 -- @noinline -- should't be compiling ptr literals src/lib/JIT.hs: 683
 def rayTraceOctTreeSparse (ray:Ray) : List Voxel = 
   (AsList _ voxels) = rayTraceOctTree ray
@@ -192,10 +191,12 @@ def rayTraceOctTreeSparse (ray:Ray) : List Voxel =
   condition = \v. voxelContainsSurface v ray sdf
   filter condition voxels
 
+-- API
 def posInVoxel (pos:Position) (voxel:Voxel) : Bool = 
   (lowerPos, upperPos) = voxeltoBB voxel
   all for d. lowerPos.d <= pos.d && pos.d<= upperPos.d
 
+-- API
 def leafVoxel (pos:Position) : Voxel = 
   case posInVoxel pos top_voxel of
     False -> outside_root_voxel
@@ -208,9 +209,10 @@ def leafVoxel (pos:Position) : Voxel =
 
 ---- Tests
 
-:p rayAABBIntersection ([0., 0., 0.], [0.1, 0.1, 0.1]) ([-0.1, -0.1, -0.1], [0.1, 0.1, 0.1])
-
 :p leafVoxel [0.1, 0.1, 0.1]
+:p max_lod
+:p voxelWidth 0
+:p voxelWidth max_lod
 
 
 '## Raytracer for debugging
@@ -251,11 +253,12 @@ def addAt (_:Eq n) ?=> (_:VSpace a) ?=> (xs:n=>a) (i:n) (x:a) : n=>a =
     False -> xs.j
 
 def gradNumerical (n:Int) ?-> (f:Vec n -> Float) (xs:Vec n) : Vec n =
-  eps = 0.0001
+  eps = 0.0000001
   for i. (f (addAt xs i eps) - f (addAt xs i (neg eps))) / (2.0 * eps)
 
 posInf = (1.0/0.0)
 
+-- API
 def adaptiveSphereTrace (rayC:RayC) : Color = 
   maxIters = 100
   tolerance = 0.001
@@ -264,21 +267,28 @@ def adaptiveSphereTrace (rayC:RayC) : Color =
   rayLength = yieldState posInf \rayLength.
     boundedIter n posInf \idxvoxel.
       currVoxel = vs.(idxvoxel@_)
-      rayLength := intersectsVoxelDistance ray currVoxel + 0.01
+      dBase = intersectsVoxelDistance ray currVoxel + 0.001
+      rayLength := dBase
       step = boundedIter maxIters posInf \_. 
         rayPos = rayOrigin + rayDir *. (get rayLength)
         step = sdfWrap max_lod rayPos
         rayLength := (get rayLength) + step*0.99
-        case step < tolerance of
+        case step < tolerance && step > 0. of
           True -> Done step
-          False -> Continue
+          False -> 
+            case posInVoxel rayPos currVoxel of
+              True -> Continue
+              False -> 
+                rayLength := posInf
+                Done posInf
       case step == posInf of
         True -> Continue
         False -> Done zero -- this shouldn't affect anything
   rayPosOnSurf = rayOrigin + rayDir *. rayLength
-  -- surfNorm = (gradNumerical \pos. sdfWrap max_lod pos) rayPosOnSurf 
-  surfNorm = (grad \pos. sdfWrap max_lod pos) rayPosOnSurf 
-  surfNorm 
+  case rayLength == posInf of
+    True -> zero
+    -- False -> (gradNumerical \pos. sdfWrap max_lod pos) rayPosOnSurf -- colors
+    False ->  hslToRgb (rayLength*20.) 1.0 0.5
 
 ' ### Define the scene and render it
 
@@ -288,9 +298,17 @@ defaultCamera = { numPix     = 100 -- 400
                 , sensorDist = 1.5 }
 
 %time
-rayvoxels : (Fin 100)=>(Fin 100)=>RayC = cameraRays defaultCamera
+rayvoxels : (Fin 200)=>(Fin 200)=>RayC = cameraRays defaultCamera
+
+rayvoxels2 = for i j. 
+      (ray, (AsList n vs)) = rayvoxels.i.j
+      if n == 0
+        then
+          (ray, (AsList 0 []))
+        else
+          (ray, (AsList 1 [head vs]))
 
 %time
-canvas = for i j. adaptiveSphereTrace rayvoxels.i.j
+canvas = for i j. adaptiveSphereTrace rayvoxels2.i.j
 
 :html imshow canvas
