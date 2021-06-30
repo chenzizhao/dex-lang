@@ -52,6 +52,238 @@ outside_root_voxel : Voxel = (0,0,0,(-2))
 
 def AABox : Type = (Position & Position)  -- opposite corners
 
+'## Loading NN parameters
+
+fdim = 32
+FDim = Fin fdim
+fsize = 4
+Input = Fin (fdim + 3)
+HiddenLayer = Fin 128
+InputWeights = HiddenLayer => Input => Float 
+OutputWeights = Fin 1 => HiddenLayer => Float 
+Biases = HiddenLayer => Float
+OutputBiases = Fin 1 => Float
+
+-- is there an existing function in prelude for this?
+def unsafeSlice (xs: n => a) (start:Int) (m: Type) : m => a =
+    for i. xs.(unsafeFromOrdinal _ (ordinal i + start))
+
+def mkFeatureVol (pts: Fin b => c) (m: Type) : FDim => m => m => m => c =
+    vol = for d2:(FDim).
+            for d3:m.
+                for d4:m.
+                    for d5:m.
+                        pts.((ordinal (d2, d3, d4, d5))@_)
+    vol
+
+def mkWeights (x: m=>v) : n=>o=>v =
+    for i j. x.(ordinal (i,j)@_)
+
+def mkBiases (x: m=>v) : n=>v =
+    for i. x.(ordinal i@_)
+
+def loadFloats (f: FilePath): List Float32 =
+    (AsList byteCount bytesArray) = unsafeIO do readFile f
+    floatCount = idiv byteCount 4
+    floatArray: Fin floatCount => Float32 = unsafeIO do 
+        withTabPtr bytesArray \ptr.
+            tabFromPtr (Fin floatCount) $ castPtr ptr
+    AsList floatCount floatArray
+
+def getIndex (power:Int) : Int = 
+    yieldAccum (AddMonoid Int) \sum.
+        for i:(Fin power).
+            r = intpow2 (ordinal i)
+            fsizei = fsize * r
+            flatsize = fdim * (fsizei+1) * (fsizei+1) * (fsizei+1)
+            sum += flatsize 
+
+def getSize (power:Int) : Int = fsize * (intpow2 power) + 1
+
+loaded_features = loadFloats "examples/features.bin"
+(AsList numf features) = loaded_features
+
+-- it'd be great to have the types defined as 
+-- '(lod: Int): FDim => (getSize lod) => (getSize lod) => (getSize lod) => Float' instead
+def query_feature_vol (lod: Int) (m: Type): FDim => m => m => m => Float =
+    level = lod
+    j = getIndex level
+    flatsizei = fdim * (size m) * (size m) * (size m)
+    featuresi = unsafeSlice features j (Fin flatsizei)
+    feature_vol = mkFeatureVol featuresi m
+    feature_vol
+
+lod0 = getSize 0
+lod1 = getSize 1
+lod2 = getSize 2
+lod3 = getSize 3
+lod4 = getSize 4
+
+f0 = query_feature_vol 0 (Fin lod0)
+f1 = query_feature_vol 1 (Fin lod1)
+f2 = query_feature_vol 2 (Fin lod2)
+f3 = query_feature_vol 3 (Fin lod3)
+f4 = query_feature_vol 4 (Fin lod4)
+
+:t f4
+
+loaded_params = loadFloats "examples/weights.bin"
+(AsList nump params) = loaded_params
+
+sInputWeights = (size HiddenLayer) * (size Input)
+sBiases = size HiddenLayer
+sOutputWeights = size HiddenLayer
+sOutputBiases = 1
+numParam = (sInputWeights) + (sBiases) + (sOutputWeights) + (sOutputBiases)
+
+def query_input_weights (lod: Int) : InputWeights =
+    j = lod * numParam
+    weights = unsafeSlice params j (Fin sInputWeights)
+    iw: InputWeights = mkWeights weights
+    iw
+
+def query_biases (lod: Int) : Biases =
+    offset = sInputWeights
+    j = lod * numParam + offset
+    biases = unsafeSlice params j (Fin sBiases)
+    b: Biases = mkBiases biases
+    b
+
+def query_output_weights (lod: Int) : OutputWeights =
+    offset = sInputWeights + sBiases
+    j = lod * numParam + offset
+    weights = unsafeSlice params j (Fin sOutputWeights)
+    iw: OutputWeights = mkWeights weights
+    iw
+
+def query_output_biases (lod: Int) : OutputBiases =
+    offset = sInputWeights + sBiases + sOutputWeights
+    j = lod * numParam + offset
+    biases = unsafeSlice params j (Fin sOutputBiases)
+    b: OutputBiases = mkBiases biases
+    b
+
+-- w1 = query_input_weights (ordinal lastLoD)
+-- b1 = query_biases (ordinal lastLoD)
+-- w2 = query_output_weights (ordinal lastLoD)
+-- b2 = query_output_biases (ordinal lastLoD)
+w1 = query_input_weights max_lod
+b1 = query_biases max_lod
+w2 = query_output_weights max_lod
+b2 = query_output_biases max_lod
+-- TODO: double check the weights match the bottome level size. 
+
+'## Interpolation 
+
+def safe_get (input: FDim => (Fin a) => (Fin a) => (Fin a) => Float) 
+             (x: Float) (y: Float) (z: Float) 
+             (fsize: Float) (dim: Int): Float =
+    case (x >= 0. && x < fsize && y >= 0. && y < fsize && z >= 0. && z < fsize) of 
+        True -> input.(dim@_).((FToI z)@_).((FToI y)@_).((FToI x)@_)
+        False -> 0.
+
+def clip_coordinates (input: Float) (clip_limit: Float) : Float =
+    min (clip_limit - 1.) (max input 0.)
+
+-- implements torch.nn.Functional.grid_sample from https://github.com/pytorch/pytorch/blob/f064c5aa33483061a48994608d890b968ae53fb5/aten/src/THNN/generic/VolumetricGridSamplerBilinear.c
+def trilinear_interp  (feature_vol: FDim => (Fin a) => (Fin a) => (Fin a) => Float)
+                      (p: Position) : FDim => Float =
+    fsize = IToF a
+    -- normalize position from [-1, 1] to [0, fsize-1]
+    x = ((p.(0@_) + 1.) / 2.) * (fsize - 1.)
+    y = ((p.(1@_) + 1.) / 2.) * (fsize - 1.)
+    z = ((p.(2@_) + 1.) / 2.) * (fsize - 1.)
+    -- corner values from (x, y, z) : north-east-south-west-top-bottom
+    ix_tnw = floor x 
+    iy_tnw = floor y 
+    iz_tnw = floor z 
+    ix_tne = ix_tnw + 1.0 
+    iy_tne = iy_tnw 
+    iz_tne = iz_tnw 
+    ix_tsw = ix_tnw 
+    iy_tsw = iy_tnw + 1.0 
+    iz_tsw = iz_tnw 
+    ix_tse = ix_tnw + 1.0
+    iy_tse = iy_tnw + 1.0
+    iz_tse = iz_tnw 
+    ix_bnw = ix_tnw
+    iy_bnw = iy_tnw
+    iz_bnw = iz_tnw + 1.0
+    ix_bne = ix_tnw + 1.0
+    iy_bne = iy_tnw
+    iz_bne = iz_tnw + 1.0
+    ix_bsw = ix_tnw
+    iy_bsw = iy_tnw + 1.0
+    iz_bsw = iz_tnw + 1.0
+    ix_bse = ix_tnw + 1.0
+    iy_bse = iy_tnw + 1.0
+    iz_bse = iz_tnw + 1.0
+    -- weighted corner values from (x, y, z)
+    tnw = (ix_bse - x) * (iy_bse - y) * (iz_bse - z)
+    tne = (x - ix_bsw) * (iy_bsw - y) * (iz_bsw - z)
+    tsw = (ix_bne - x) * (y - iy_bne) * (iz_bne - z)
+    tse = (x - ix_bnw) * (y - iy_bnw) * (iz_bnw - z)
+    bnw = (ix_tse - x) * (iy_tse - y) * (z - iz_tse)
+    bne = (x - ix_tsw) * (iy_tsw - y) * (z - iz_tsw)
+    bsw = (ix_tne - x) * (y - iy_tne) * (z - iz_tne)
+    bse = (x - ix_tnw) * (y - iy_tnw) * (z - iz_tnw)
+    -- pad out-of-bound grid locations with border values
+    x_tnw = clip_coordinates ix_tnw fsize
+    y_tnw = clip_coordinates iy_tnw fsize
+    z_tnw = clip_coordinates iz_tnw fsize
+    x_tne = clip_coordinates ix_tne fsize
+    y_tne = clip_coordinates iy_tne fsize
+    z_tne = clip_coordinates iz_tne fsize
+    x_tsw = clip_coordinates ix_tsw fsize
+    y_tsw = clip_coordinates iy_tsw fsize
+    z_tsw = clip_coordinates iz_tsw fsize
+    x_tse = clip_coordinates ix_tse fsize
+    y_tse = clip_coordinates iy_tse fsize
+    z_tse = clip_coordinates iz_tse fsize
+    x_bnw = clip_coordinates ix_bnw fsize
+    y_bnw = clip_coordinates iy_bnw fsize
+    z_bnw = clip_coordinates iz_bnw fsize
+    x_bne = clip_coordinates ix_bne fsize
+    y_bne = clip_coordinates iy_bne fsize
+    z_bne = clip_coordinates iz_bne fsize
+    x_bsw = clip_coordinates ix_bsw fsize
+    y_bsw = clip_coordinates iy_bsw fsize
+    z_bsw = clip_coordinates iz_bsw fsize
+    x_bse = clip_coordinates ix_bse fsize
+    y_bse = clip_coordinates iy_bse fsize
+    z_bse = clip_coordinates iz_bse fsize
+    for i:(FDim). 
+        tnw_val = safe_get feature_vol x_tnw y_tnw z_tnw fsize (ordinal i)
+        tne_val = safe_get feature_vol x_tne y_tne z_tne fsize (ordinal i)
+        tsw_val = safe_get feature_vol x_tsw y_tsw z_tsw fsize (ordinal i)
+        tse_val = safe_get feature_vol x_tse y_tse z_tse fsize (ordinal i)
+        bnw_val = safe_get feature_vol x_bnw y_bnw z_bnw fsize (ordinal i)
+        bne_val = safe_get feature_vol x_bne y_bne z_bne fsize (ordinal i)
+        bsw_val = safe_get feature_vol x_bsw y_bsw z_bsw fsize (ordinal i)
+        bse_val = safe_get feature_vol x_bse y_bse z_bse fsize (ordinal i)
+        tnw_val * tnw + tne_val * tne + tsw_val * tsw + tse_val * tse + bnw_val * bnw + bne_val * bne + bsw_val * bsw + bse_val * bse
+    
+'## Neural network 
+
+p = [0.,0.,0.5]
+
+@noinline
+def relu (input : Float) : Float =
+  select (input > 0.0) input 0.0
+
+-- @noinline
+def dilloMLP (p: Position) : Distance =
+    f = (trilinear_interp f0 p) + (trilinear_interp f1 p) + (trilinear_interp f2 p) + (trilinear_interp f3 p) + (trilinear_interp f4 p)
+    comb_input = (AsList _ p) <> (AsList _ f)
+    (AsList _ cinput) = comb_input
+    -- is this necessary?
+    input = for i:Input. cinput.(unsafeFromOrdinal _ (ordinal i))
+    l1 = w1 **. input + b1 
+    l2 = for i. relu l1.i 
+    l3 = w2 **. l2 + b2
+    l3.(0@_)
+
+
 '## Bounding box utilities
 
 def voxelWidth (lod: LoD) : Float = 
@@ -233,7 +465,7 @@ Camera =
   & halfWidth  : Float     -- sensor half-width
   & sensorDist : Float }   -- pinhole-sensor distance
 
-def cameraRays (camera:Camera) : Fin n => Fin n => RayC =
+def cameraRays (camera:Camera) : Fin n => Fin n => Ray =
   halfWidth = getAt #halfWidth camera
   pixHalfWidth = halfWidth / IToF n
   ys = reverse $ linspace (Fin n) (neg halfWidth) halfWidth
@@ -243,7 +475,13 @@ def cameraRays (camera:Camera) : Fin n => Fin n => RayC =
     y = ys.i
     rayPos = getAt #pos camera
     rayDir = normalize [x, y, neg (getAt #sensorDist camera)]
-    ray = (rayPos, rayDir)
+    (rayPos, rayDir)
+  -- diff code for dillo
+
+def cameraRayCs (camera:Camera) : Fin n => Fin n => RayC = 
+  rays = cameraRays camera
+  for i j.
+    ray = rays.i.j
     rayList = rayTraceOctTreeSparse ray
     (ray, rayList)
 
@@ -257,6 +495,25 @@ def gradNumerical (n:Int) ?-> (f:Vec n -> Float) (xs:Vec n) : Vec n =
   for i. (f (addAt xs i eps) - f (addAt xs i (neg eps))) / (2.0 * eps)
 
 posInf = (1.0/0.0)
+
+-- API
+def basicSphereTrace (ray:Ray) : Color = 
+  maxIters = 100
+  tolerance = 0.001
+  (rayOrigin, rayDir) = ray
+  rayLength = yieldState 0.0 \rayLength.
+    boundedIter maxIters posInf \_.
+      rayPos = rayOrigin + rayDir *. (get rayLength)
+      step = sdfWrap max_lod rayPos
+      rayLength := (get rayLength) + step * 0.99
+      case step < tolerance of 
+        True -> Done zero
+        False -> Continue
+  rayPosOnSurf = rayOrigin + rayDir *. rayLength
+  case rayLength == posInf of
+    True -> zero
+    False -> (gradNumerical \pos. sdfWrap max_lod pos) rayPosOnSurf -- colors
+    -- False ->  hslToRgb (rayLength*20.) 1.0 0.5
 
 -- API
 def adaptiveSphereTrace (rayC:RayC) : Color = 
@@ -287,8 +544,9 @@ def adaptiveSphereTrace (rayC:RayC) : Color =
   rayPosOnSurf = rayOrigin + rayDir *. rayLength
   case rayLength == posInf of
     True -> zero
-    -- False -> (gradNumerical \pos. sdfWrap max_lod pos) rayPosOnSurf -- colors
-    False ->  hslToRgb (rayLength*20.) 1.0 0.5
+    False -> (gradNumerical \pos. sdfWrap max_lod pos) rayPosOnSurf -- colors
+    -- False ->  hslToRgb (rayLength*20.) 1.0 0.5
+
 
 ' ### Define the scene and render it
 
@@ -297,18 +555,18 @@ defaultCamera = { numPix     = 100 -- 400
                 , halfWidth  = 0.3
                 , sensorDist = 1.5 }
 
+-- full octree intersection
 %time
-rayvoxels : (Fin 200)=>(Fin 200)=>RayC = cameraRays defaultCamera
-
-rayvoxels2 = for i j. 
-      (ray, (AsList n vs)) = rayvoxels.i.j
-      if n == 0
-        then
-          (ray, (AsList 0 []))
-        else
-          (ray, (AsList 1 [head vs]))
-
+rayvoxels : (Fin 200)=>(Fin 200)=>RayC = cameraRayCs defaultCamera
 %time
-canvas = for i j. adaptiveSphereTrace rayvoxels2.i.j
+img1 = for i j. adaptiveSphereTrace rayvoxels.i.j
 
-:html imshow canvas
+-- basic sphere trace
+%time
+rays : (Fin 200) => (Fin 200) => Ray = cameraRays defaultCamera
+%time
+img2 = for i j. basicSphereTrace rays.i.j
+
+
+:html imshow img1
+:html imshow img2
