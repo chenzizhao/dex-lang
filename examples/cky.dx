@@ -1,9 +1,4 @@
-
-Label = Fin 10
-
-Len = Fin 5
-sentence = ["John", "hit", "the", "ball", "eos"]
-           
+Len = Fin 10
 I = 1@Len
 J = 4@Len
 
@@ -32,23 +27,19 @@ def chart (ref:Ref h (Chart a b )) (i: a) (j: (i<..)) : Ref h b =
     d = %indexRef ref i
     d!j
 
-c1 : Chart (Fin 3) Float = for i j. 3.0
-:p c1
--- Chart defines an upside down triangle matrix. 
---   The first column denotes all size-1 spans
---   The last column denotes the entire string
---   The element at i-th row and j-th column, is value stored for 
---      the inclusive string slice [i,j]. 
+def Params2 (b:Type) (labels:Type) : Type = labels => labels => b
+def Sentence (a:Type) (b:Type) : Type = a => b
 
-p1 : Params (Fin 3) Float (Fin 4) = for i j k. 2.0
-:p p1
-
-def cky [Add pos, Add semi, Mul semi] (weights' : Params pos semi labels) : (semi & Chart pos semi) =
+def cky [Add pos, Add semi, Mul semi]
+    (sentence_ : Sentence pos_ semi_) -- todo
+    (deriver : semi -> semi -> semi) -- todo
+    (weights' : Params pos semi labels) 
+    : (semi & Chart pos semi) =
     -- Initialize the chart to all zeros
     c_init : Chart pos semi  = for i. for j. zero
     (first, last) = (start, end) -- why?
-    -- Sum out the labels -- why?
     weights : Chart pos semi = for i j. sum for k. weights'.k.i.j
+    
     out = runState c_init $ \ c. -- State: 2-D Chart, Result:
       C = chart c
 
@@ -72,7 +63,7 @@ def cky [Add pos, Add semi, Mul semi] (weights' : Params pos semi labels) : (sem
               sum for k' : (i<..<j).
                   k =  %inject k'
                   -- substring [i,k] and substring [k, j]
-                  c'.i.(cast k') * c'.k.(rebase j') * w 
+                  w * (deriver c'.i.(cast k') c'.k.(rebase j')) 
                   -- todo do something about the labels?
         
         -- Fill (i, j) in the chart, one column
@@ -87,12 +78,66 @@ def cky [Add pos, Add semi, Mul semi] (weights' : Params pos semi labels) : (sem
 
 ' Run an example
 
-WordPos = Fin 7
-Labels = Fin 10
+WordPos = Fin 4
+Labels = Fin 6 -- N, V, Det, NP, VP, S
 
-key =  (newKey 0)
+-- Example sentence
+-- John hit the ball
+-- N    V    Det   N
+-- N    V    NP
+-- N    VP
+-- S
+-- sentenceString = ["John", "hit", "the", "ball"]
+-- omits the first step: tagging each word
+sentence : Sentence WordPos (Labels=>Float) = [
+  [1., 0., 0., 0., 0., 0.], -- John N
+  [0., 1., 0., 0., 0., 0.], -- hit V
+  [0., 0., 1., 0., 0., 0.], -- the Det
+  [1., 0., 0., 0., 0., 0.]  -- ball N
+]
+
+-- Example weights
+-- 6*6*6 cube of floats.
+-- encode all binary product rules
+-- labelB => labelC => labelA => Float
+-- p2.b.c.a is the weight for the product rule `a->bc`
+param2 : Params2 (Labels=>Float) Labels = for b c a. 
+  rule = (ordinal b, ordinal c, ordinal a)
+  case rule == (0,4,5) of -- N VP -> S
+    True -> 1.0 
+    False -> 
+      case rule == (1,3,4) of -- V NP -> VP
+        True -> 1.0
+        False -> 
+          case rule == (2,0,3) of -- Det N -> NP
+            True -> 1.0
+            False -> 0.0 -- rule not found
+
+def derive 
+-- for a string slice [i,j] with partition k
+-- name substring [i,j] a
+-- name substring [i,k] b
+-- name substring [k,j] c
+  (param2:Params2 (Labels=>Float) Labels)
+  (bvec:Labels=>Float) -- probability distr for substring b
+  (cvec:Labels=>Float) -- probability distr for substring c
+   -- cubic weights for binary product rules
+  : (avec:Labels=>Float) = -- prob distr for substring a
+    for alabel. 
+      sum $ for blabel.
+        sum $ for clabel. 
+          bvec.blabel * cvec.clabel * param2.blabel.clabel.alabel
+
+bvec = [1., 0., 0., 0., 0., 0.] -- b is a N
+cvec = [0., 0., 1., 0., 0., 0.] -- c is a Det
+derive param2 cvec bvec -- param2 include rule `Det N -> NP`
+derive param2 bvec cvec -- param2 does not include rule `N Det -> NP`
+
+
+key = (newKey 0)
 param : Params WordPos Float Labels = for i j k. rand (ixkey2 key i (j, k))
-(v, table) = cky param
+:t param
+(v, table) = cky sentence (*) param
 
 -- Todo : Want this to work
 -- (grad \p. log $ fst $ cky p) param 
@@ -103,4 +148,3 @@ param' = for i j. sum for label. param.label.i.j
 
 :p v
 :p table
-:t table
