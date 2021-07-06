@@ -103,17 +103,12 @@ sentence : Sentence WordPos (Labels=>Float) = [
 -- encode all binary product rules
 -- labelB => labelC => labelA => Float
 -- p2.b.c.a is the weight for the product rule `a->bc`
-param2 : Params2 (Labels=>Float) Labels = for b c a. 
-  rule = (ordinal b, ordinal c, ordinal a)
-  case rule == (0,4,5) of -- N VP <- S
-    True -> 1.0 
-    False -> 
-      case rule == (1,3,4) of -- V NP <- VP
-        True -> 1.0
-        False -> 
-          case rule == (2,0,3) of -- Det N <- NP
-            True -> 1.0
-            False -> 0.0 -- rule not found
+-- todo rewrite with state
+param2 : Params2 (Labels=>Float) Labels =
+  yieldState zero \r.
+    r!(0@_)!(4@_)!(5@_) := 1.0 -- N VP <- S
+    r!(1@_)!(3@_)!(4@_) := 1.0 -- V NP <- VP
+    r!(2@_)!(0@_)!(3@_) := 1.0 -- Det N <- NP
 
 def derive 
 -- for a string slice [i,j] with partition k
