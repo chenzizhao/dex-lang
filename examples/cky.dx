@@ -22,7 +22,6 @@ instance Add (Fin a)
 
 
 def Chart (a:Type) (b:Type) : Type = i:a => (i<..) => b
-def Params (a:Type) (b:Type) (labels:Type) : Type = labels => Chart a b
 def chart (ref:Ref h (Chart a b )) (i: a) (j: (i<..)) : Ref h b =
     d = %indexRef ref i
     d!j
@@ -31,16 +30,14 @@ def Params2 (b:Type) (labels:Type) : Type = labels => labels => b
 def Sentence (a:Type) (b:Type) : Type = a => b
 
 def cky [Add pos, Add semi, Mul semi]
-    (sentence_ : Sentence pos_ semi_) -- todo
-    (deriver : semi -> semi -> semi) -- todo
-    (weights' : Params pos semi labels) 
+    (sentence: Sentence pos semi)
+    (deriver : semi -> semi -> semi)
     : (semi & Chart pos semi) =
     -- Initialize the chart to all zeros
     c_init : Chart pos semi  = for i. for j. zero
     (first, last) = (start, end) -- why?
-    weights : Chart pos semi = for i j. sum for k. weights'.k.i.j
     
-    out = runState c_init $ \ c. -- State: 2-D Chart, Result:
+    out = runState c_init $ \ c.
       C = chart c
 
       -- Enumerate over all spans d
@@ -48,8 +45,10 @@ def cky [Add pos, Add semi, Mul semi]
       for_ d. -- what is for_?
         boundary = last - d
         v = case ordinal d == 0 of
-          -- Size 1 spans are mapped are initialized as 1
-          True -> one
+          True -> -- Size 1 spans are mapped to the initialized sentence
+            for i' : (..<boundary).
+              i = %inject i'
+              sentence.i 
           False ->
             -- Main loop. No writes
             c' = get c
@@ -57,28 +56,26 @@ def cky [Add pos, Add semi, Mul semi]
               -- Calculate span (i, j)
               i = %inject i'
               j':(i<..) = cast d
-              w = weights.i.j' -- for the label of substring [i,j]
               j = %inject j'
               -- Sum over k in i<..<j
               sum for k' : (i<..<j).
                   k =  %inject k'
-                  -- substring [i,k] and substring [k, j]
-                  w * (deriver c'.i.(cast k') c'.k.(rebase j')) 
-                  -- todo do something about the labels?
+                  deriver c'.i.(cast k') c'.k.(rebase j')
         
         -- Fill (i, j) in the chart, one column
         for i' : (..<boundary).
           i = %inject i'
           j':(i<..) = cast d
           C i j' :=  v.i'
-        () -- otherwise leaked variables
+        ()
+      
       get $ C first end
     out
 
 
 ' Run an example
 
-WordPos = Fin 4
+WordPos = Fin 5
 Labels = Fin 6 -- N, V, Det, NP, VP, S
 
 -- Example sentence
@@ -87,13 +84,14 @@ Labels = Fin 6 -- N, V, Det, NP, VP, S
 -- N    V    NP
 -- N    VP
 -- S
--- sentenceString = ["John", "hit", "the", "ball"]
+-- sentenceString = ["John", "hit", "the", "ball", "eos"]
 -- omits the first step: tagging each word
 sentence : Sentence WordPos (Labels=>Float) = [
   [1., 0., 0., 0., 0., 0.], -- John N
   [0., 1., 0., 0., 0., 0.], -- hit V
   [0., 0., 1., 0., 0., 0.], -- the Det
-  [1., 0., 0., 0., 0., 0.]  -- ball N
+  [1., 0., 0., 0., 0., 0.], -- ball N
+  [1., 1., 1., 1., 1., 1.]  -- EOS -- TODO needed for the types to work out..
 ]
 
 -- Example weights
@@ -115,36 +113,34 @@ param2 : Params2 (Labels=>Float) Labels = for b c a.
 
 def derive 
 -- for a string slice [i,j] with partition k
--- name substring [i,j] a
+-- name the entire string [i,j] a
 -- name substring [i,k] b
 -- name substring [k,j] c
-  (param2:Params2 (Labels=>Float) Labels)
-  (bvec:Labels=>Float) -- probability distr for substring b
-  (cvec:Labels=>Float) -- probability distr for substring c
-   -- cubic weights for binary product rules
+  (param2:Params2 (Labels=>Float) Labels) -- cube representing binary product rules
+  (bvec:Labels=>Float)     -- prob distr for substring b
+  (cvec:Labels=>Float)     -- prob distr for substring c
   : (avec:Labels=>Float) = -- prob distr for substring a
     for alabel. 
       sum $ for blabel.
         sum $ for clabel. 
           bvec.blabel * cvec.clabel * param2.blabel.clabel.alabel
 
+-- test derive
 bvec = [1., 0., 0., 0., 0., 0.] -- b is a N
 cvec = [0., 0., 1., 0., 0., 0.] -- c is a Det
 derive param2 cvec bvec -- param2 include rule `Det N -> NP`
 derive param2 bvec cvec -- param2 does not include rule `N Det -> NP`
 
 
-key = (newKey 0)
-param : Params WordPos Float Labels = for i j k. rand (ixkey2 key i (j, k))
-:t param
-(v, table) = cky sentence (*) param
+deriver = derive param2
+(v, table) = cky sentence deriver
+
+:p v
+:p table
 
 -- Todo : Want this to work
 -- (grad \p. log $ fst $ cky p) param 
 
--- read-only thru out the cky
-param' = for i j. sum for label. param.label.i.j
-:p param'
-
-:p v
-:p table
+-- todo define loss function
+--  as a classifier, reward `last v == 1.0`
+--  if parsing tree info is provided, define tree1 -> tree2 -> distance
