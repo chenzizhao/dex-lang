@@ -6,14 +6,19 @@ vectrice
 v = Fv
 
 ' ### visualizer
-define a collection of points
+let's view a spiral from different references.
 
 import plot
 
-xs : (Fin 10)=>Float = arb (newKey 0)
-ys : (Fin 10)=>Float = arb (newKey 0)
+t = linspace (Fin 500) zero (6.0*pi)
+xs = for i. t.i .* [cos t.i, sin t.i, 10.]
 
-xyPlot xs ys
+def myPlot (ps : n=>(Fin 3)=>Float) : String = 
+    [xs, ys, zs] = transpose ps
+    showPlot $ xycPlot xs ys zs 
+    -- color represents depth: blue=far, orange=close
+
+:html myPlot xs
 
 
 ' ### reference frame on the move
