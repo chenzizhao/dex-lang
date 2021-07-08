@@ -10,9 +10,6 @@ Inverse = Quotient DimensionlessQuantity
 Product = \a b. Quotient a (Inverse b)
 Square  = \a. Product a a
 
--- def num   (b->a:Type) : Type = a
--- def denom (b->a:Type) : Type = b
-
 interface Quantity q
     construct : Float -> q
     destruct  : q -> Float
@@ -24,6 +21,32 @@ instance Quantity (BaseQuantity a)
 instance [Quantity q, Quantity r] Quantity (Quotient r q)
     construct = \x:Float. \y. construct (x*(destruct y))
     destruct  = \x:(Quotient r q). destruct (x (construct 1.0))
+
+def quotientAxiom [Quantity a, Quantity b, Quantity c] 
+    (_ : Quotient a (Quotient b c)) : Quotient c (Quotient b a)
+    = construct <<< destruct
+
+instance [Quantity a] Add a
+    add = \x y. construct $ (destruct x) + (destruct y)
+    sub = \x y. construct $ (destruct x) - (destruct y)
+    zero = construct 0.
+
+-- mimic Mul interface
+def mul' [Quantity a, Quantity b] (x:a) (y:b) : Product a b = 
+    \z. construct $ destruct (z y) * destruct x
+
+def one' [Quantity a] : a = construct 1.
+
+-- mimic Fractional interface
+def divide' [Quantity a, Quantity b] (x:a) (y:b) : Quotient a b = 
+    \z. construct $ (destruct z) * (destruct x) / (destruct y)
+
+instance [Quantity a] Eq a
+    (==) = \x y. (destruct x) == (destruct y)
+
+instance [Quantity a] Ord a
+    (>) = \x y. (destruct x) > (destruct y)
+    (<) = \x y. (destruct x) < (destruct y)
 
 ' Examples
 
