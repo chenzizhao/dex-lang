@@ -1,5 +1,6 @@
 ' https://www.stephanboyer.com/post/131/type-safe-dimensional-analysis-in-haskell 
 
+-- wrapper type around Float, a keeps track of the unit
 data BaseQuantity a = 
     MkBaseQuantity Float
 DimensionlessQuantity = BaseQuantity Unit
@@ -20,14 +21,10 @@ instance Quantity (BaseQuantity a)
     construct = MkBaseQuantity
     destruct  = \(MkBaseQuantity x). x
 
-instance [Quantity q, r] Quantity (q->r)
--- instance [Quantity q, r] Quantity (Quotient r q)
-    construct = \x:Float. 
-        CQuantity = BaseQuantity (q->r)
-        z : CQuantity = construct x
-        z
-    destruct  = \x. destruct (x (construct 1.))
-
+-- fails to work bc recursive definition
+instance [Quantity q, r] Quantity (Quotient r q)
+    construct = \x:Float. \y. construct (x*(destruct y))
+    destruct  = \x:(Quotient r q). destruct (x (construct 1.0))
 
 ' Examples
 
@@ -42,7 +39,7 @@ Area = Square Length
 Velocity = Quotient Length Time
 
 :p Length
-:p Quotient Length Length
+:p Velocity
 
 l1 : Length = construct 1.0
 :t l1
