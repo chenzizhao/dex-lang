@@ -41,6 +41,11 @@ def one' [Quantity a] : a = construct 1.
 def divide' [Quantity a, Quantity b] (x:a) (y:b) : Quotient a b = 
     \z. construct $ (destruct z) * (destruct x) / (destruct y)
 
+def (+!) [Quantity a] : a->a->a = add
+def (-!) [Quantity a] : a->a->a = sub
+def (*!) [Quantity a, Quantity b] : a->b->(Product a b) = mul'
+def (/!) [Quantity a, Quantity b] : a->b->(Quotient a b) = divide'
+
 instance [Quantity a] Eq a
     (==) = \x y. (destruct x) == (destruct y)
 
