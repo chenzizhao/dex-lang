@@ -1,3 +1,4 @@
+-- based on mailed in 
 import plot
 
 
@@ -8,47 +9,59 @@ earth_mass = 5.9736e24
 earth_dist = 152098232.0e3
 earth_velo = 29.78e3
 
+BodyId = Fin 11
+
 masses     = earth_mass .* [332981.7, 0.0553, 0.815, 0.0123, 1.0, 0.107, 317.8, 95.2, 14.5, 17.1, 0.0025]
 distances  = earth_dist .* [0.0, 0.387,	0.723, 1.00257, 1.0, 1.52, 5.20, 9.58,	19.20, 30.05,	39.48]
 velocities = earth_velo .* [0.0, 1.59, 1.18, 1.0343, 1.0, 0.808, 0.439, 0.325, 0.228,	0.182, 0.157]
 
-planets = for i:(Fin 11). ([distances.i, 0.0], [0.0, velocities.i], masses.i)
+D = (Fin 2)
 
 -- Todo: generalize to vector/metric spaces?
--- Todo: unbundle mass from state
-def Body (d:Type) : Type = (d=>Float & d=>Float & Float) -- position, velocity, mass
 
-def force (b1:Body d) (b2:Body d) : d=>Float =
-  (p1, v1, m1) = b1
-  (p2, v2, m2) = b2
+Position = D=>Float
+Velocity = D=>Float
+Force = D=>Float
+
+data Body = MkBodyState BodyId Position Velocity
+def overlap ((MkBodyState _ p1 _):Body) 
+            ((MkBodyState _ p2 _):Body) : Bool = p1==p2
+
+planets_init : BodyId => Body = for i:BodyId.
+  pos = [distances.i, 0.0]
+  vel = [0.0, velocities.i]
+  (MkBodyState i pos vel)
+
+def force (b1:Body) (b2:Body) : Force =
+  (MkBodyState _ p1 v1) = b1
+  (MkBodyState id2 p2 v2) = b2
   diff = p2 - p1
   distance = sqrt $ vdot diff diff
-  gf = gravity * m2 / (sq distance)
+  gf = gravity * masses.id2 / (sq distance)
   gf .* diff / distance
 
-def total_force (b:(Body d)) (bodies:in=>(Body d)) : d=>Float =
+def total_force (b:Body) (bodies:n=>Body) : Force =
   -- Computes force of bodies on body b.
-  myzero = for d. 0.0
-  sum for i. select (bodies.i == b) myzero (force b bodies.i)
+  sum for i. select (overlap bodies.i b) zero (force b bodies.i)
 
 dt = 100000.0
 times = Fin 100
-planet_ixs = Fin 11
 
-def update (bodies:n=>(Body d)) (dt:Float) : n=>(Body d) =
+def update (bodies:n=>Body) (dt:Float) : n=>Body =
   -- Updates all the body states.
   for i.
     -- Todo: don't compute forces with yourself when for ranges are fixed.
     f = total_force bodies.i bodies
-    (p, v, m) = bodies.i
+    (MkBodyState id p v) = bodies.i
       -- Todo: use a better integrator.
     v' = v + dt .* f  -- Euler integrator.
     p' = p + dt .* v  -- Euler integrator
-    (p', v', m)
+    (MkBodyState id p' v')
 
-def step (n:times) (bodies:i=>(Body d)) : i=>(Body d) = 
+def step (_:times) (bodies:n=>Body) : n=>Body = 
   update bodies dt
 
+-- todo why not use scan
 -- Versions of scan that explicity take the index set n.
 def scan'' (init:a) (n:Type) (body:n->a->(a&b)) : (a & n=>b) =
   swap $ runState init \s. for i.
@@ -60,19 +73,17 @@ def scan'' (init:a) (n:Type) (body:n->a->(a&b)) : (a & n=>b) =
 def scan''' (init:a) (n:Type) (body:n->a->a) : n=>a =
   snd $ scan'' init n \i x. dup (body i x)
 
-history = scan''' planets times step
+history = scan''' planets_init times step
 
 -- unroll coordinates for plotting.
-coords = for (t, i):(times & planet_ixs).
-  (p, v, m) = history.t.i
+coords = for (t, i):(times & BodyId).
+  (MkBodyState _ p _) = history.t.i
   (p.(0@_), p.(1@_))
 
--- Print last coordinates)
+:t coords
+-- Print last coordinates
 :p coords.(((size times) - 1)@_)
 
 -- Plot coordinates
 (xs, ys) = unzip coords
 :html showPlot $ xyPlot xs ys
-
-
-
