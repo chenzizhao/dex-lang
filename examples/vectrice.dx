@@ -1,0 +1,27 @@
+' ### basic definitions
+vector
+matrix
+reference frame
+vectrice
+v = Fv
+
+' ### visualizer
+define a collection of points
+
+import plot
+
+xs : (Fin 10)=>Float = arb (newKey 0)
+ys : (Fin 10)=>Float = arb (newKey 0)
+
+xyPlot xs ys
+
+
+' ### reference frame on the move
+
+
+' #### moving point
+
+
+' #### rotating reference frame
+
+
