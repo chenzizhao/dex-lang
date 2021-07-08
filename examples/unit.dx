@@ -68,6 +68,13 @@ Velocity = Quotient Length Time
 :p Length
 :p Velocity
 
-l1 : Length = construct 1.0
-:t l1
-:t destruct l1
+-- example 1
+width  : Length = construct 1.5
+height : Length = construct 2.5
+area   : Area   = width *! height
+-- :p area
+-- :p (destruct area)
+-- :t area
+mass   : Mass   = construct 150.
+area2  : Area   = width *! mass -- expect compile time error
+-- todo impl. show to nicer error msg
