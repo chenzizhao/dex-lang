@@ -1,0 +1,78 @@
+import plot
+
+
+-- Numbers from https://github.com/adityavkk/N-Body-Simulations/blob/master/Direct-Simulation/src/SolarSystem.hs
+
+gravity = 6.674286e-11  -- units?
+earth_mass = 5.9736e24
+earth_dist = 152098232.0e3
+earth_velo = 29.78e3
+
+masses     = earth_mass .* [332981.7, 0.0553, 0.815, 0.0123, 1.0, 0.107, 317.8, 95.2, 14.5, 17.1, 0.0025]
+distances  = earth_dist .* [0.0, 0.387,	0.723, 1.00257, 1.0, 1.52, 5.20, 9.58,	19.20, 30.05,	39.48]
+velocities = earth_velo .* [0.0, 1.59, 1.18, 1.0343, 1.0, 0.808, 0.439, 0.325, 0.228,	0.182, 0.157]
+
+planets = for i:(Fin 11). ([distances.i, 0.0], [0.0, velocities.i], masses.i)
+
+-- Todo: generalize to vector/metric spaces?
+-- Todo: unbundle mass from state
+def Body (d:Type) : Type = (d=>Float & d=>Float & Float) -- position, velocity, mass
+
+def force (b1:Body d) (b2:Body d) : d=>Float =
+  (p1, v1, m1) = b1
+  (p2, v2, m2) = b2
+  diff = p2 - p1
+  distance = sqrt $ vdot diff diff
+  gf = gravity * m2 / (sq distance)
+  gf .* diff / distance
+
+def total_force (b:(Body d)) (bodies:in=>(Body d)) : d=>Float =
+  -- Computes force of bodies on body b.
+  myzero = for d. 0.0
+  sum for i. select (bodies.i == b) myzero (force b bodies.i)
+
+dt = 100000.0
+times = Fin 100
+planet_ixs = Fin 11
+
+def update (bodies:n=>(Body d)) (dt:Float) : n=>(Body d) =
+  -- Updates all the body states.
+  for i.
+    -- Todo: don't compute forces with yourself when for ranges are fixed.
+    f = total_force bodies.i bodies
+    (p, v, m) = bodies.i
+      -- Todo: use a better integrator.
+    v' = v + dt .* f  -- Euler integrator.
+    p' = p + dt .* v  -- Euler integrator
+    (p', v', m)
+
+def step (n:times) (bodies:i=>(Body d)) : i=>(Body d) = 
+  update bodies dt
+
+-- Versions of scan that explicity take the index set n.
+def scan'' (init:a) (n:Type) (body:n->a->(a&b)) : (a & n=>b) =
+  swap $ runState init \s. for i.
+    c = get s
+    (c', y) = body i c
+    s := c'
+    y
+
+def scan''' (init:a) (n:Type) (body:n->a->a) : n=>a =
+  snd $ scan'' init n \i x. dup (body i x)
+
+history = scan''' planets times step
+
+-- unroll coordinates for plotting.
+coords = for (t, i):(times & planet_ixs).
+  (p, v, m) = history.t.i
+  (p.(0@_), p.(1@_))
+
+-- Print last coordinates)
+:p coords.(((size times) - 1)@_)
+
+-- Plot coordinates
+(xs, ys) = unzip coords
+:html showPlot $ xyPlot xs ys
+
+
+
