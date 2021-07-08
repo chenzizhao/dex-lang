@@ -1,0 +1,49 @@
+' https://www.stephanboyer.com/post/131/type-safe-dimensional-analysis-in-haskell 
+
+data BaseQuantity a = 
+    MkBaseQuantity Float
+DimensionlessQuantity = BaseQuantity Unit
+
+Quotient = \a b. b->a -- a/b
+Inverse = Quotient DimensionlessQuantity
+Product = \a b. Quotient a (Inverse b)
+Square  = \a. Product a a
+
+-- def num   (b->a:Type) : Type = a
+-- def denom (b->a:Type) : Type = b
+
+interface Quantity q
+    construct : Float -> q
+    destruct  : q -> Float
+
+instance Quantity (BaseQuantity a)
+    construct = MkBaseQuantity
+    destruct  = \(MkBaseQuantity x). x
+
+instance [Quantity q, r] Quantity (q->r)
+-- instance [Quantity q, r] Quantity (Quotient r q)
+    construct = \x:Float. 
+        CQuantity = BaseQuantity (q->r)
+        z : CQuantity = construct x
+        z
+    destruct  = \x. destruct (x (construct 1.))
+
+
+' Examples
+
+data Meter = MkMeter -- dummy constructors
+data Kilogram = MkKilogram
+data Second = MkSecond
+
+Length = BaseQuantity Meter
+Mass = BaseQuantity Kilogram
+Time = BaseQuantity Second
+Area = Square Length
+Velocity = Quotient Length Time
+
+:p Length
+:p Quotient Length Length
+
+l1 : Length = construct 1.0
+:t l1
+:t destruct l1
