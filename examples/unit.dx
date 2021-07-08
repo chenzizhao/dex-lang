@@ -21,8 +21,7 @@ instance Quantity (BaseQuantity a)
     construct = MkBaseQuantity
     destruct  = \(MkBaseQuantity x). x
 
--- fails to work bc recursive definition
-instance [Quantity q, r] Quantity (Quotient r q)
+instance [Quantity q, Quantity r] Quantity (Quotient r q)
     construct = \x:Float. \y. construct (x*(destruct y))
     destruct  = \x:(Quotient r q). destruct (x (construct 1.0))
 
