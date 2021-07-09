@@ -53,7 +53,7 @@ instance [Quantity a] Ord a
     (>) = \x y. (destruct x) > (destruct y)
     (<) = \x y. (destruct x) < (destruct y)
 
-' Examples
+' ### Examples
 
 data Meter = MkMeter -- dummy constructors
 data Kilogram = MkKilogram
@@ -65,16 +65,26 @@ Time = BaseQuantity Second
 Area = Square Length
 Velocity = Quotient Length Time
 
+-- todo impl. show to nicer msg
 :p Length
 :p Velocity
 
--- example 1
+' Example 1
+
 width  : Length = construct 1.5
 height : Length = construct 2.5
 area   : Area   = width *! height
 -- :p area
--- :p (destruct area)
--- :t area
+:p (destruct area)
+:t area
+
 mass   : Mass   = construct 150.
 area2  : Area   = width *! mass -- expect compile time error
--- todo impl. show to nicer error msg
+
+' Example 2
+
+velocity : Velocity = construct 30.    -- m/s
+duration : Time     = construct 5000.  -- s
+distance : Length   = velocity duration-- m
+:p (destruct distance)
+:t distance
