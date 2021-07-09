@@ -1,6 +1,8 @@
-' https://www.stephanboyer.com/post/131/type-safe-dimensional-analysis-in-haskell 
+' ### [Type safe dimensional analysis in Haskell](https://www.stephanboyer.com/post/131/type-safe-dimensional-analysis-in-haskell) by Stepan Boyer (implemented in Dex) 
 
--- wrapper type around Float, a keeps track of the unit
+' The basics
+
+-- wrapper type around Float to track of the unit
 data BaseQuantity a = 
     MkBaseQuantity Float
 DimensionlessQuantity = BaseQuantity Unit
@@ -26,18 +28,18 @@ def quotientAxiom [Quantity a, Quantity b, Quantity c]
     (_ : Quotient a (Quotient b c)) : Quotient c (Quotient b a)
     = construct <<< destruct
 
+' Some helpful functions
+
 instance [Quantity a] Add a
     add = \x y. construct $ (destruct x) + (destruct y)
     sub = \x y. construct $ (destruct x) - (destruct y)
     zero = construct 0.
 
--- mimic Mul interface
 def mul' [Quantity a, Quantity b] (x:a) (y:b) : Product a b = 
     \z. construct $ destruct (z y) * destruct x
 
 def one' [Quantity a] : a = construct 1.
 
--- mimic Fractional interface
 def divide' [Quantity a, Quantity b] (x:a) (y:b) : Quotient a b = 
     \z. construct $ (destruct z) * (destruct x) / (destruct y)
 
@@ -65,7 +67,7 @@ Time = BaseQuantity Second
 Area = Square Length
 Velocity = Quotient Length Time
 
--- todo impl. show to nicer msg
+-- todo impl. show for nicer msgs
 :p Length
 :p Velocity
 
@@ -88,3 +90,4 @@ duration : Time     = construct 5000.  -- s
 distance : Length   = velocity duration-- m
 :p (destruct distance)
 :t distance
+-- (m/s) * (s) = (m), cancel the denominator with function application
