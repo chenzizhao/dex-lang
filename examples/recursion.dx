@@ -1,24 +1,17 @@
 ' Factorial
 
 interface RecursiveFactorial a b
-    recurExtr : a->b
-    -- recurFact : a->a
+    recurFact : a->b->a
 
-instance RecursiveFactorial (a&Unit) a -- base case
-    recurExtr = fst
-    -- recurFact = id
+instance RecursiveFactorial (Int&Unit) Int-- base case
+    recurFact = \(x,()) y:Int. (x,()) 
 
-instance [RecursiveFactorial a Int] RecursiveFactorial (Int&a) Int
-    recurExtr = \(x, xs). x * (recurExtr xs)
-    -- recurFact = \(x, xs). x * recurFact xs
+-- instance [RecursiveFactorial a] RecursiveFactorial (Int&a) Int
+--     recurFact = \(x, xs) y. (x * (recurFact xs y), ())
 
-recurExtr (1,())
+recurFact (1,()) 0
 
 :t (1,())
-
-(1,2,3)
-(_,x) = (1,2,3)
-x
 
 -- -- a more general 
 -- interface Recursive a b
