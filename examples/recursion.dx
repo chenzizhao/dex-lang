@@ -1,20 +1,16 @@
-' Factorial
+' Recursive sum: sum up a possibly-infinite tuple of integers (1,(2,(3,...)))
 
-interface RecursiveFactorial a b
-    recurFact : a->b->a
+A = Int
+B = Int
+def base' (x:A) (y:A) : B = x+y
+def recurr' ((t,y):(A&A&A&A&A)) : B = base' t $ recurr' y
 
-instance RecursiveFactorial (Int&Unit) Int-- base case
-    recurFact = \(x,()) y:Int. (x,()) 
+interface Recur ab b
+    recur : ab->b
 
--- instance [RecursiveFactorial a] RecursiveFactorial (Int&a) Int
---     recurFact = \(x, xs) y. (x * (recurFact xs y), ())
+instance [Add a] Recur (a&a) a
+    recur = \(t,s):(a&a). t + s
 
-recurFact (1,()) 0
-
-:t (1,())
-
--- -- a more general 
--- interface Recursive a b
---     base : a->b
---     recur: a->a
-
+%passes
+instance [Recur b] Recur (a&b) b
+    recur = \(t,y):(a&b). t + recur y
