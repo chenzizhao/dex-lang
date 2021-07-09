@@ -24,8 +24,8 @@ instance [Quantity q, Quantity r] Quantity (Quotient r q)
     construct = \x:Float. \y. construct (x*(destruct y))
     destruct  = \x:(Quotient r q). destruct (x (construct 1.0))
 
-def quotientAxiom [Quantity a, Quantity b, Quantity c] 
-    (_ : Quotient a (Quotient b c)) : Quotient c (Quotient b a)
+def quotientAxiom [Quantity a, Quantity b, Quantity c] : 
+    (Quotient a (Quotient b c)) -> (Quotient c (Quotient b a))
     = construct <<< destruct
 
 ' Some helpful functions
@@ -88,6 +88,14 @@ area2  : Area   = width *! mass -- expect compile time error
 velocity : Velocity = construct 30.    -- m/s
 duration : Time     = construct 5000.  -- s
 distance : Length   = velocity duration-- m
+-- distance : Length   = duration velocity-- m -- todo breaks
 :p (destruct distance)
 :t distance
 -- (m/s) * (s) = (m), cancel the denominator with function application
+-- two ways to multiply
+
+-- todo example 3
+
+-- todo [Floating a] unit for log(x)
+
+-- todo recursive def interface, for factorial?
