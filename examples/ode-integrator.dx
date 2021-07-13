@@ -177,3 +177,21 @@ ys = odeint myDyn z0 t0 times
 
 :html showPlot $ yPlot for i. ys.i.(fromOrdinal _ 0)
 > <html output>
+
+'#### Example: Lorenz system
+
+def lorenz (pos:(Fin 3)=>Float) -> (t:Time) : (Fin 3)=>Float = 
+  [x,y,z] = pos
+  sigma = 10.
+  beta = 8./3.
+  rho = 28.
+  x' = sigma * (y-x)
+  y' = x*(rho-z)-y
+  z' = x*y-beta*z
+  [x', y', z']
+
+pos0 = [1., 1., 1.]
+times2 = linspace (Fin 2000) 0.0001 20.0
+[xs2, ys2, zs2] = transpose $ odeint lorenz pos0 t0 times2
+:html showPlot $ xycPlot ys2 zs2 xs2
+> <html output>
