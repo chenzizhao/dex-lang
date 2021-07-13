@@ -1,16 +1,21 @@
 ' Recursive sum: sum up a possibly-infinite tuple of integers (1,(2,(3,...)))
 
-A = Int
-B = Int
-def base' (x:A) (y:A) : B = x+y
-def recurr' ((t,y):(A&A&A&A&A)) : B = base' t $ recurr' y
+-- A = Int
+-- B = Int
+-- def base' (x:A) (y:A) : B = x+y
+-- def recurr' ((t,y):(A&A&A&A&A)) : B = base' t $ recurr' y
 
-interface Recur ab b
-    recur : ab->b
+interface Recur a b c
+    recur : c->b->(a->b->b)->b
 
-instance [Add a] Recur (a&a) a
-    recur = \(t,s):(a&a). t + s
+instance Recur ele acc ele
+    recur = \ele' acc' accumulate. accumulate ele' acc'
 
-%passes
-instance [Recur b] Recur (a&b) b
-    recur = \(t,y):(a&b). t + recur y
+instance [Recur ele acc ele, Recur ele acc sub] Recur ele acc (ele&sub)
+    recur = \(ele', sub') acc' accumulate.
+        newacc' = accumulate ele' acc'
+        recur sub' newacc' accumulate
+
+recur (4) (0) (+)
+
+recur (4, 3, 2, 1) (0) (+)
