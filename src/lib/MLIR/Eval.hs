@@ -6,10 +6,7 @@
 
 module MLIR.Eval where
 
-import Data.Function
-import qualified Data.ByteString.Char8       as BSC8
-import qualified Data.ByteString             as BS
-import GHC.Stack
+import Data.Functor
 
 import qualified MLIR.AST                    as AST
 import qualified MLIR.AST.Serialize          as AST
@@ -23,22 +20,16 @@ import Syntax
 import LLVMExec
 
 evalModule :: AST.Operation -> [LitVal] -> [BaseType] -> IO [LitVal]
-evalModule ast args resultTypes =
+evalModule mOp args resultTypes =
   Native.withContext \ctx -> do
     Native.registerAllDialects ctx
-    mOp     <- AST.fromAST ctx (mempty, mempty) ast
-    Just m  <- Native.moduleFromOperation mOp
-    verifyModule m
+    Just m <- Native.moduleFromOperation =<< AST.fromAST ctx (mempty, mempty) mOp
     Native.withPassManager ctx \pm -> do
-      throwOnFailure "Failed to parse pass pipeline" $
-        (Native.addParsedPassPipeline pm $ BS.intercalate ","
-          [ "func(tensor-bufferize,std-bufferize,finalizing-bufferize)"
-          , "convert-memref-to-llvm"
-          , "convert-std-to-llvm"
-          ])
-      Native.runPasses pm m & throwOnFailure "Failed to lower module"
-    verifyModule m
-    Native.withExecutionEngine m \(Just eng) -> do
+      Native.addConvertStandardToLLVMPass pm
+      Native.runPasses pm m <&> \case
+        Native.Success -> ()
+        Native.Failure -> error "Failed to lower to LLVM"
+    Native.withExecutionEngine m \(Just eng)-> do
       Native.withStringRef "entry" \name -> do
         allocaCells (length args) \argsPtr ->
           allocaCells (length resultTypes) \resultPtr -> do
@@ -46,19 +37,3 @@ evalModule ast args resultTypes =
             Just () <- Native.executionEngineInvoke @() eng name
               [Native.SomeStorable argsPtr, Native.SomeStorable resultPtr]
             loadLitVals resultPtr resultTypes
-
-verifyModule :: HasCallStack => Native.Module -> IO ()
-verifyModule m = do
-  correct <- Native.verifyOperation =<< Native.moduleAsOperation m
-  case correct of
-    True  -> return ()
-    False -> do
-      modStr <- BSC8.unpack <$> Native.showModule m
-      error $ "Invalid module:\n" ++ modStr
-
-throwOnFailure :: String -> IO Native.LogicalResult -> IO ()
-throwOnFailure msg m = do
-  result <- m
-  case result of
-    Native.Success -> return ()
-    Native.Failure -> error msg
