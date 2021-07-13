@@ -1,21 +1,26 @@
 ' Recursive sum: sum up a possibly-infinite tuple of integers (1,(2,(3,...)))
 
--- A = Int
--- B = Int
--- def base' (x:A) (y:A) : B = x+y
--- def recurr' ((t,y):(A&A&A&A&A)) : B = base' t $ recurr' y
-
 interface Recur a b c
+-- a: element, b: final output, c: element/element+subproblem
+-- requirement: c in a patterm-matchable form, i.e. tuple, constructor
     recur : c->b->(a->b->b)->b
 
 instance Recur ele acc ele
+-- base case: when there is no subproblem, i.e. a==c==ele
     recur = \ele' acc' accumulate. accumulate ele' acc'
 
-instance [Recur ele acc ele, Recur ele acc sub] Recur ele acc (ele&sub)
+instance [Recur ele acc sub] Recur ele acc (ele&sub)
+-- recursive case: there is a subproblem to solve
     recur = \(ele', sub') acc' accumulate.
         newacc' = accumulate ele' acc'
         recur sub' newacc' accumulate
 
 recur (4) (0) (+)
 
-recur (4, 3, 2, 1) (0) (+)
+%time
+recur (8,7,6,5,4,3,2,1) (0) (+)
+
+%time
+sum [8,7,6,5,4,3,2,1]
+
+' DFS: traverse a tree, produce sum of all node values
