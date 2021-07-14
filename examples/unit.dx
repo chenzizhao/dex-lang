@@ -94,6 +94,14 @@ distance : Length   = velocity duration-- m
 -- (m/s) * (s) = (m), cancel the denominator with function application
 -- two ways to multiply
 
--- todo example 3
+' Example 3
+
+def calculateDuration (dist: Length) (vel: Velocity) : Time = 
+    (quotientAxiom (dist /! vel)) id
+
+fasterVelocity : Velocity = construct 40.
+shorterDuration: Time = calculateDuration distance fasterVelocity
+:p (destruct shorterDuration)
+:t shorterDuration
 
 -- todo [Floating a] unit for log(x)
