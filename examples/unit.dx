@@ -64,10 +64,22 @@ data Second = MkSecond
 Length = BaseQuantity Meter
 Mass = BaseQuantity Kilogram
 Time = BaseQuantity Second
+
+instance Show Length
+    show = \(MkBaseQuantity t). (show t) <> " m"
+
+instance Show Mass
+    show = \(MkBaseQuantity t). (show t) <> " kg"
+
+instance Show Time
+    show = \(MkBaseQuantity t). (show t) <> " sec"
+
+-- instance Show (Quotient a b)
+--     show = \(b'->a'). "("<>show a'<>"/"<>show b'<>")"
+
 Area = Square Length
 Velocity = Quotient Length Time
 
--- todo impl. show for nicer msgs
 :p Length
 :p Velocity
 
@@ -76,9 +88,9 @@ Velocity = Quotient Length Time
 width  : Length = construct 1.5
 height : Length = construct 2.5
 area   : Area   = width *! height
--- :p area
 :p (destruct area)
 :t area
+-- :p (show area)
 
 mass   : Mass   = construct 150.
 area2  : Area   = width *! mass -- expect compile time error
@@ -88,11 +100,11 @@ area2  : Area   = width *! mass -- expect compile time error
 velocity : Velocity = construct 30.    -- m/s
 duration : Time     = construct 5000.  -- s
 distance : Length   = velocity duration-- m
--- distance : Length   = duration velocity-- m -- todo breaks
+-- (m/s) * (s) = (m), cancel the denominator with function application
 :p (destruct distance)
 :t distance
--- (m/s) * (s) = (m), cancel the denominator with function application
--- two ways to multiply
+:p (show distance)
+-- distance2 : Length   = duration velocity -- breaks
 
 ' Example 3
 
@@ -103,5 +115,6 @@ fasterVelocity : Velocity = construct 40.
 shorterDuration: Time = calculateDuration distance fasterVelocity
 :p (destruct shorterDuration)
 :t shorterDuration
+:p (show shorterDuration)
 
 -- todo [Floating a] unit for log(x)
