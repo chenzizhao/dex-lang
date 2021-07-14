@@ -2,7 +2,9 @@
 data Node a node =
   Branch (Maybe node) (Maybe node)
   Leaf a
-data Tree a node = TreeArray (node=>(Node a node))
+data Tree a node = 
+  TreeArray (node=>(Node a node))
+  TreeArrayBuffer node (node=>(Node a node))
 
 tree = TreeArray [ Leaf 2.0, Leaf 3.0, Branch (Just (0@_)) (Just (1@_)), Branch Nothing (Just (2@_)) ]
 
@@ -10,3 +12,13 @@ tree = TreeArray [ Leaf 2.0, Leaf 3.0, Branch (Just (0@_)) (Just (1@_)), Branch 
 >(TreeArray [ (Leaf 2.), (Leaf 3.), (Branch (Just (0@Fin 4)) (Just (1@Fin 4))), (Branch Nothing (Just (2@Fin 4))) ])
 
 :t tree
+
+
+def initBufferTree : Tree a (Fin n) = 
+  head = 0@(Fin n)
+  arr = for i:(Fin n). Branch Nothing Nothing
+  TreeArrayBuffer head arr
+
+bufferTree : Tree Float (Fin 10) = initBufferTree
+
+:p bufferTree
