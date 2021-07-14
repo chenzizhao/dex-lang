@@ -57,6 +57,9 @@ instance [Quantity a] Ord a
     (>) = \x y. (destruct x) > (destruct y)
     (<) = \x y. (destruct x) < (destruct y)
 
+instance [Quantity a] VSpace a
+    scaleVec = \s q. construct $ s * (destruct q)
+
 ' #### Examples
 
 data Meter = MkMeter -- dummy constructors
@@ -122,4 +125,6 @@ shorterDuration: Time = calculateDuration distance fasterVelocity
 :t shorterDuration
 :p (show shorterDuration)
 
--- todo: extend units to Floating operations e.g. log(x)
+' #### Future directions
+- extend units to Floating operations e.g. log(x)
+- enable: the determinant of a matrix is volumetric
