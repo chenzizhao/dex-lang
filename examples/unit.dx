@@ -1,8 +1,9 @@
-' ### [Type safe dimensional analysis in Haskell](https://www.stephanboyer.com/post/131/type-safe-dimensional-analysis-in-haskell) by Stepan Boyer (implemented in Dex) 
+' ## Type safe dimensional analysis in Dex
+Reimplementing [Type safe dimensional analysis in Haskell by Stepan Boyer](https://www.stephanboyer.com/post/131/type-safe-dimensional-analysis-in-haskell) 
 
-' The basics
+' #### Define the quantity interface
 
--- wrapper type around Float to track of the unit
+-- wrap around Float to track the unit
 data BaseQuantity a = 
     MkBaseQuantity Float
 DimensionlessQuantity = BaseQuantity Unit
@@ -24,17 +25,14 @@ instance [Quantity q, Quantity r] Quantity (Quotient r q)
     construct = \x:Float. \y. construct (x*(destruct y))
     destruct  = \x:(Quotient r q). destruct (x (construct 1.0))
 
-def quotientAxiom [Quantity a, Quantity b, Quantity c] : 
-    (Quotient a (Quotient b c)) -> (Quotient c (Quotient b a))
-    = construct <<< destruct
-
-' Some helpful functions
+' #### Algebra with quantities
 
 instance [Quantity a] Add a
     add = \x y. construct $ (destruct x) + (destruct y)
     sub = \x y. construct $ (destruct x) - (destruct y)
     zero = construct 0.
 
+-- cannot implement the Mul interface as the types do not match.
 def mul' [Quantity a, Quantity b] (x:a) (y:b) : Product a b = 
     \z. construct $ destruct (z y) * destruct x
 
@@ -42,6 +40,10 @@ def one' [Quantity a] : a = construct 1.
 
 def divide' [Quantity a, Quantity b] (x:a) (y:b) : Quotient a b = 
     \z. construct $ (destruct z) * (destruct x) / (destruct y)
+
+def quotientAxiom [Quantity a, Quantity b, Quantity c] : 
+    (Quotient a (Quotient b c)) -> (Quotient c (Quotient b a))
+    = destruct >>> construct
 
 def (+!) [Quantity a] : a->a->a = add
 def (-!) [Quantity a] : a->a->a = sub
@@ -55,7 +57,7 @@ instance [Quantity a] Ord a
     (>) = \x y. (destruct x) > (destruct y)
     (<) = \x y. (destruct x) < (destruct y)
 
-' ### Examples
+' #### Examples
 
 data Meter = MkMeter -- dummy constructors
 data Kilogram = MkKilogram
@@ -74,28 +76,30 @@ instance Show Mass
 instance Show Time
     show = \(MkBaseQuantity t). (show t) <> " sec"
 
--- instance Show (Quotient a b)
---     show = \(b'->a'). "("<>show a'<>"/"<>show b'<>")"
-
 Area = Square Length
 Velocity = Quotient Length Time
+
+instance [Show a, Show b] Show (Quotient a b)
+    show = todo
 
 :p Length
 :p Velocity
 
-' Example 1
+' Example 1: track units in types
 
 width  : Length = construct 1.5
 height : Length = construct 2.5
 area   : Area   = width *! height
+
 :p (destruct area)
 :t area
 -- :p (show area)
 
 mass   : Mass   = construct 150.
-area2  : Area   = width *! mass -- expect compile time error
+-- expect type error
+area2  : Area   = width *! mass
 
-' Example 2
+' Example 2: quantities as functions
 
 velocity : Velocity = construct 30.    -- m/s
 duration : Time     = construct 5000.  -- s
@@ -106,15 +110,16 @@ distance : Length   = velocity duration-- m
 :p (show distance)
 -- distance2 : Length   = duration velocity -- breaks
 
-' Example 3
+' Example 3: manual proof of unit equality
 
-def calculateDuration (dist: Length) (vel: Velocity) : Time = 
+def calculateDuration (dist:Length) (vel:Velocity) : Time = 
     (quotientAxiom (dist /! vel)) id
 
 fasterVelocity : Velocity = construct 40.
 shorterDuration: Time = calculateDuration distance fasterVelocity
+
 :p (destruct shorterDuration)
 :t shorterDuration
 :p (show shorterDuration)
 
--- todo [Floating a] unit for log(x)
+-- todo: extend units to Floating operations e.g. log(x)
