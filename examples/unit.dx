@@ -97,5 +97,3 @@ distance : Length   = velocity duration-- m
 -- todo example 3
 
 -- todo [Floating a] unit for log(x)
-
--- todo recursive def interface, for factorial?
