@@ -1,0 +1,12 @@
+
+data Node a node =
+  Branch (Maybe node) (Maybe node)
+  Leaf a
+data Tree a node = TreeArray (node=>(Node a node))
+
+tree = TreeArray [ Leaf 2.0, Leaf 3.0, Branch (Just (0@_)) (Just (1@_)), Branch Nothing (Just (2@_)) ]
+
+:p tree
+>(TreeArray [ (Leaf 2.), (Leaf 3.), (Branch (Just (0@Fin 4)) (Just (1@Fin 4))), (Branch Nothing (Just (2@Fin 4))) ])
+
+:t tree
