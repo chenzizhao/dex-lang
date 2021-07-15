@@ -1,24 +1,53 @@
 
-data Node a node =
-  Branch (Maybe node) (Maybe node)
-  Leaf a
-data Tree a node = 
-  TreeArray (node=>(Node a node))
-  TreeArrayBuffer node (node=>(Node a node))
+' ### Barnes-Hut algorithm for the N body problem
+https://jheer.github.io/barnes-hut/
 
-tree = TreeArray [ Leaf 2.0, Leaf 3.0, Branch (Just (0@_)) (Just (1@_)), Branch Nothing (Just (2@_)) ]
+NodeId = Int
+BodyInd = Fin 10
 
-:p tree
->(TreeArray [ (Leaf 2.), (Leaf 3.), (Branch (Just (0@Fin 4)) (Just (1@Fin 4))), (Branch Nothing (Just (2@Fin 4))) ])
+data Node a =
+  Branch lNode:(Maybe NodeId) rNode:(Maybe NodeId) pNode:NodeId 
+  Leaf   v:a    pNode:NodeId
+  UninitializedNode
 
-:t tree
+data Tree a = 
+  TreeArray head:NodeId arr:(List (Node a))
 
+def Vec (d:Int) : Type = (Fin d)=>Float
 
-def initBufferTree : Tree a (Fin n) = 
-  head = 0@(Fin n)
-  arr = for i:(Fin n). Branch Nothing Nothing
-  TreeArrayBuffer head arr
+Body = {
+  ind:BodyInd -- used to access static property e.g. mass
+& pos:Vec 3
+& vel:Vec 3
+& nodeId:NodeId
+}
 
-bufferTree : Tree Float (Fin 10) = initBufferTree
+-- todo: use actual data
+[k1,k2] = splitKey (newKey 0)
+initPos : BodyInd=>Vec 3 = arb k1
+initVel : BodyInd=>Vec 3 = arb k2
+masses  : BodyInd=>Float = one
+bodies : BodyInd => Body = for i.
+  { ind=i, pos=initPos.i, vel=initVel.i, nodeId=(-1) }
 
-:p bufferTree
+' #### Step 1 Build the tree
+
+-- todo: pre-allocate, and expand when needed
+def initTree : Tree Body = -- todo: leaf value could be BodyInd or Body
+  head = -1
+  arr = (AsList 0 [])
+  TreeArray head arr
+
+def buildTree (bodies:BodyInd=>Body) : Tree Body = 
+  tree = initTree
+  tree
+
+:p buildTree bodies
+
+' #### Step 2 Update center of mass for each node
+
+' #### Step 3 Estimate force on each body
+
+' #### Step 4 Update pos and vel of each body, on this time step
+
+' #### Evolve over time steps 
