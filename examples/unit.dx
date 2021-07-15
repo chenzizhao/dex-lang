@@ -57,8 +57,7 @@ instance [Quantity a] Ord a
     (>) = \x y. (destruct x) > (destruct y)
     (<) = \x y. (destruct x) < (destruct y)
 
-instance [Quantity a] VSpace a
-    scaleVec = \s q. construct $ s * (destruct q)
+def qCast [Quantity q, Quantity r] : q->r = destruct >>> construct
 
 ' #### Examples
 
@@ -124,6 +123,35 @@ shorterDuration: Time = calculateDuration distance fasterVelocity
 :p (destruct shorterDuration)
 :t shorterDuration
 :p (show shorterDuration)
+
+' Example 4: encode normalization
+
+data UnboundedFloat = MkUnbounded
+R = BaseQuantity UnboundedFloat
+instance Show R
+    show = \(MkBaseQuantity x). (show x) <> "from (-inf, +inf)"
+
+data NormalizedFloat = MkNormalized
+UnitR = BaseQuantity NormalizedFloat
+instance Show UnitR
+    show = \(MkBaseQuantity x). (show x) <> "from [0, 1]"
+Probability = UnitR 
+
+def qsoftmax (x:n=>R) : n=>Probability = 
+    x' = for i. destruct x.i
+    x'' = softmax x'
+    for i. construct x''.i
+
+instance [Quantity a] Arbitrary a
+    arb = \key. construct $ arb key
+
+x : (Fin 5)=> R = arb (newKey 0)
+:p x
+:t x
+
+normalized_x = qsoftmax x
+:p normalized_x
+:t normalized_x
 
 ' #### Future directions
 - extend units to Floating operations e.g. log(x)
