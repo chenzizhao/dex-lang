@@ -57,7 +57,10 @@ instance [Quantity a] Ord a
     (>) = \x y. (destruct x) > (destruct y)
     (<) = \x y. (destruct x) < (destruct y)
 
-def qCast [Quantity q, Quantity r] : q->r = destruct >>> construct
+instance [Quantity a] Arbitrary a
+    arb = \key. construct $ arb key
+
+def qcast [Quantity q, Quantity r] : q->r = destruct >>> construct
 
 ' #### Examples
 
@@ -124,33 +127,74 @@ shorterDuration: Time = calculateDuration distance fasterVelocity
 :t shorterDuration
 :p (show shorterDuration)
 
-' Example 4: encode normalization
+' Example 4: bounded real numbers
+
+' A more efficient way is newtype (see mcmc.dx LogProb=Float)
 
 data UnboundedFloat = MkUnbounded
-R = BaseQuantity UnboundedFloat
-instance Show R
+data NormalizedFloat = MkNormalized
+data PositiveFloat = MkPositive
+data NonNegativeFloat = MkNonNegative
+
+Unbounded = BaseQuantity UnboundedFloat
+Probability = BaseQuantity NormalizedFloat
+ProbDensity = BaseQuantity NonNegativeFloat
+LogProbDensity = BaseQuantity UnboundedFloat
+
+instance Show Unbounded
+    show = \(MkBaseQuantity x). (show x) <> "from (-inf, +inf)"
+instance Show Probability
+    show = \(MkBaseQuantity x). (show x) <> "from [0, 1]"
+instance Show ProbDensity
+    show = \(MkBaseQuantity x). (show x) <> "from [0, +inf)"
+instance Show LogProbDensity
     show = \(MkBaseQuantity x). (show x) <> "from (-inf, +inf)"
 
-data NormalizedFloat = MkNormalized
-UnitR = BaseQuantity NormalizedFloat
-instance Show UnitR
-    show = \(MkBaseQuantity x). (show x) <> "from [0, 1]"
-Probability = UnitR 
+-- continuous probability distribution
+def qfromFloat [Quantity q] : Float -> q = construct
 
-def qsoftmax (x:n=>R) : n=>Probability = 
-    x' = for i. destruct x.i
-    x'' = softmax x'
-    for i. construct x''.i
+def qtoFloat [Quantity q] : q -> Float = destruct
 
-instance [Quantity a] Arbitrary a
-    arb = \key. construct $ arb key
+def qapply [Quantity q, Quantity r] (f:Float->Float) : q->r =
+    destruct >>> f >>> construct
 
-x : (Fin 5)=> R = arb (newKey 0)
-:p x
+def qexp : LogProbDensity -> ProbDensity = qapply exp
+
+def qlog : ProbDensity -> LogProbDensity = qapply log
+
+def qnormalizePdf (qxs:n=>Unbounded) : n=>ProbDensity =
+    xs = map destruct qxs
+    ret = xs / sum xs
+    map construct ret
+
+def qsoftmax (qxs:n=>Unbounded) : n=>Probability =
+    xs = map destruct qxs
+    ret = softmax xs
+    map construct ret
+
+def qlogsoftmax (qxs:n=>Unbounded) : n=>LogProbDensity =
+    xs = map destruct qxs
+    ret = logsoftmax xs
+    map construct ret
+
+-- discrete probability distribution
+def qcumSumLow (qxs:n=>Probability) : n=>Probability =
+    xs = map destruct qxs
+    ret = cumSumLow xs
+    map construct ret
+
+x : (Fin 5)=>Float = arb (newKey 0)
 :t x
 
-normalized_x = qsoftmax x
-:p normalized_x
+qx : (Fin 5)=>Unbounded = map qfromFloat x
+:p qx
+:t qx
+
+normalized_qx = qsoftmax qx
+:p normalized_qx
+:t normalized_qx
+
+normalized_x = map qtoFloat normalized_qx
 :t normalized_x
 
 ' #### Future directions
