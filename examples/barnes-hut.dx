@@ -8,10 +8,8 @@ BodyInd = Fin 10
 data Node a =
   Branch lNode:(Maybe NodeId) rNode:(Maybe NodeId) pNode:NodeId 
   Leaf   v:a    pNode:NodeId
-  UninitializedNode
 
-data Tree a = 
-  TreeArray head:NodeId arr:(List (Node a))
+def Tree (a:Type) : Type = List (Node a)
 
 def Vec (d:Int) : Type = (Fin d)=>Float
 
@@ -27,20 +25,23 @@ Body = {
 initPos : BodyInd=>Vec 3 = arb k1
 initVel : BodyInd=>Vec 3 = arb k2
 masses  : BodyInd=>Float = one
-bodies : BodyInd => Body = for i.
+bodies  : BodyInd=>Body  = for i.
   { ind=i, pos=initPos.i, vel=initVel.i, nodeId=(-1) }
 
 ' #### Step 1 Build the tree
 
 -- todo: pre-allocate, and expand when needed
-def initTree : Tree Body = -- todo: leaf value could be BodyInd or Body
-  head = -1
-  arr = (AsList 0 [])
-  TreeArray head arr
+-- todo: leaf value could be BodyInd or Body
 
 def buildTree (bodies:BodyInd=>Body) : Tree Body = 
-  tree = initTree
-  tree
+  initTree : Tree Body = AsList _ []
+  yieldState initTree \tls.
+    for i:BodyInd.
+      body:Body = bodies.i
+      pNode = 0
+      leaf:Node Body = Leaf body pNode
+      append tls leaf
+      ()
 
 :p buildTree bodies
 
