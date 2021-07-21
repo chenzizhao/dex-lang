@@ -1,54 +1,342 @@
 
-' ### Barnes-Hut algorithm for the N body problem
+' ## Barnes-Hut algorithm for the N body problem
 https://jheer.github.io/barnes-hut/
 
-NodeId = Int
-BodyInd = Fin 10
+D = 2
+S = intpow2 D
 
-data Node a =
-  Branch lNode:(Maybe NodeId) rNode:(Maybe NodeId) pNode:NodeId 
-  Leaf   v:a    pNode:NodeId
+' ### Quadtree 
 
-def Tree (a:Type) : Type = List (Node a)
+data Node a b node =
+    Branch cnodes:((Fin S)=>(Maybe node))   pnode:(Maybe node)  nodedata:b
+    Leaf   leafdata:a                       pnode:(Maybe node)  nodedata:b
+    Unused
 
+data Tree a b node =
+    TreeArray head:node     arr:(node=>(Node a b node))
+
+def replaceInTable [Eq n] (ind:n) (val:v) (vals:n=>v): n=>v = 
+    for i. if i==ind then val else vals.i
+
+def (+!) (n:a) (m:Int) : a = ((ordinal n) + m)@_
+
+def isBranch (n:Node a b node) : Bool = 
+    case n of
+        Branch _ _ _ -> True
+        Leaf _ _ _ -> False
+        Unused -> False
+
+def getNodeData (n:Node a b node) : b = 
+    case n of
+        Branch _ _ nodedata -> nodedata
+        Leaf _ _ nodedata -> nodedata
+        Unused -> error "cannot get nodedata of unused node"
+
+-- API
+def insertElement 
+    (decide:(Node a b node)->a->(Fin S))
+    (initNodeData:(Node a b node)->a->b)
+    (tree:Tree a b node)
+    (val:a)
+    : Tree a b node = 
+    (TreeArray headId arr) = tree
+    -- find appropriate parent node (read only)
+    pId:node = yieldState (0@_) \cid.
+        while \(). 
+            cnode = arr.(get cid)
+            case cnode of
+                Unused -> False
+                Leaf _ _ _ -> False
+                Branch cnodes _ _ ->
+                    ind = decide cnode val
+                    case cnodes.ind of 
+                        Just id -> 
+                            cid := id
+                            True
+                        Nothing -> False
+    -- modify the tree
+    pnode = arr.pId
+    (newHead, newArr) = case pnode of 
+        Unused ->
+            newArr = yieldState arr \ref.
+                ref!pId := Leaf val Nothing (initNodeData pnode val)
+            newHead = headId +! 1
+            (newHead, newArr)
+        Branch cnodes ppnode bdata->
+            newArr = yieldState arr \ref.
+                valId = headId
+                ref!valId := Leaf val (Just pId) (initNodeData pnode val)
+                valSId = decide pnode val
+                newcnodes = cnodes |> (replaceInTable valSId (Just valId))
+                ref!pId := Branch newcnodes ppnode bdata
+            newHead = headId +! 1
+            (newHead, newArr)
+        Leaf pval ppnode pdata -> 
+            newArr = yieldState arr \ref.
+                valId:node = headId +! 1
+                ref!headId := Leaf pval (Just pId) (initNodeData pnode pval)
+                ref!valId := Leaf val (Just pId) (initNodeData pnode val)
+                headSId = decide pnode pval
+                valSId = decide pnode val
+                -- todo iterate until headSId != valSid
+                cnodes = (for i. Nothing) |>
+                    (replaceInTable headSId (Just headId)) |>
+                    (replaceInTable valSId (Just valId))
+                ref!pId := Branch cnodes ppnode pdata -- all about BBox
+            newHead = headId +! 2
+            (newHead, newArr)
+    -- repack
+    TreeArray newHead newArr
+
+-- todo this can be combined with insertElement in theory
+def updateAllNodeData
+    (updateBranchData:(Tree a b node)->(Node a b node)->(Node a b node))
+    (tree:Tree a b node) : Tree a b node = 
+    (TreeArray headId arr) = tree
+    (AsList _ branchIds) = argFilter isBranch arr
+    arr2 = yieldState arr \ref. rof i.
+        ctree = TreeArray headId (get ref)
+        cbranch = get $ ref!(branchIds.i)
+        ref!(branchIds.i) := updateBranchData ctree cbranch
+    (TreeArray headId arr2)
+
+
+' ### Domain specific setups
+
+NodeId = Fin 20
+BodyInd = Fin 5
 def Vec (d:Int) : Type = (Fin d)=>Float
+BBox = ((Vec D)&(Vec D))
 
 Body = {
-  ind:BodyInd -- used to access static property e.g. mass
-& pos:Vec 3
-& vel:Vec 3
-& nodeId:NodeId
+    ind:BodyInd
+  & m:Float
+  & pos:Vec D
+--   & vel:Vec D
+--   & nodeId:NodeId
 }
 
--- todo: use actual data
+NodeData = {
+    bb:BBox
+  & m:Float
+  & com:Vec D
+}
+
+' #### Bounding box utilities
+
+def bbWidth ((low, high):BBox) : Float =
+    (high.(0@_) - low.(0@_))
+
+def center ((low, high):BBox) : Vec D =
+    half = (bbWidth (low, high)) / 2.
+    for d. low.d + half
+
+def subQuad ((low, high):BBox) (pos:Vec D) : Fin S =
+    [mid_x, mid_y] = center (low, high)
+    [pos_x, pos_y] = pos
+    bit1 = BToW8 $ pos_x > mid_x
+    bit2 = BToW8 $ pos_y > mid_y
+    bits = W8ToI $ bit1 .|. (bit2 .<<. 1)
+    bits@_
+
+def subBox ((low, high):BBox) (pos:Vec D) : BBox =
+    -- assume pos in BBox
+    half = (bbWidth (low, high)) / 2.
+    newlow = for d. low.d + half * (floor ((pos.d-low.d)/half))
+    newhigh = for d. newlow.d + half
+    (newlow, newhigh)
+
+' #### Two functions needed in insertElement
+
+-- API
+def initNodeDataFn (pnode:Node Body NodeData NodeId) (val:Body) : NodeData = 
+    case pnode of 
+        Unused -> 
+            bbox = ([-2., -2.], [2.,2.])
+            pos = getAt #pos val
+            { bb=bbox, m=(getAt #m val), com=pos }
+        Leaf _ _ nodedata ->
+            pbox = getAt #bb nodedata
+            pos = getAt #pos val
+            bbox = subBox pbox pos
+            { bb=bbox, m=(getAt #m val), com=pos }
+        Branch _ _ nodedata ->
+            pbox = getAt #bb nodedata
+            pos = getAt #pos val
+            bbox = subBox pbox pos
+            { bb=bbox, m=(getAt #m val), com=pos }
+
+-- API
+def decide (pnode:Node Body NodeData NodeId) (val:Body) : (Fin S) = 
+    case pnode of 
+        Unused -> error "Function decide shouldn't be called on unused node"
+        Leaf _ _ nodedata ->
+            pbox = getAt #bb nodedata
+            pos = getAt #pos val
+            subQuad pbox pos
+        Branch _ _ nodedata ->
+            pbox = getAt #bb nodedata
+            pos = getAt #pos val
+            subQuad pbox pos
+
+
+' #### One function needed in updateAllNodeData
+
+def summarizeChildNodes
+    (tree:Tree Body NodeData NodeId)
+    (cnodes:(Fin S)=>(Maybe NodeId))
+    : (Float & Float & Float) =
+    (TreeArray _ arr) = tree
+    [m, xmom, ymom] = yieldAccum (AddMonoid Float) \ref. 
+        for i.
+            cnode = cnodes.i
+            case cnode of 
+                Nothing -> ()
+                Just id -> 
+                    nodedata = getNodeData arr.id
+                    m = getAt #m nodedata
+                    [x,y] = getAt #com nodedata
+                    ref += [m, x*m, y*m]
+    (m, xmom/m, ymom/m)
+
+-- API
+def updateBranchData 
+    (tree:Tree Body NodeData NodeId) 
+    (bnode:Node Body NodeData NodeId)
+    : Node Body NodeData NodeId = 
+    case bnode of 
+        Leaf _ _ _ -> error "shouldn't be called on leaves"
+        Unused -> error "shouldn't be called on unused nodes"
+        Branch cnodes pnode nodedata -> 
+            (mass, xbar, ybar) = summarizeChildNodes tree cnodes
+            nodedata' = nodedata |> 
+                setAt #m mass |>
+                setAt #com [xbar, ybar]
+            (Branch cnodes pnode nodedata')
+
+' ### Test
+
+' #### Synthetic data
+
 [k1,k2] = splitKey (newKey 0)
-initPos : BodyInd=>Vec 3 = arb k1
-initVel : BodyInd=>Vec 3 = arb k2
+initPos : BodyInd=>Vec 2 = arb k1
 masses  : BodyInd=>Float = one
-bodies  : BodyInd=>Body  = for i.
-  { ind=i, pos=initPos.i, vel=initVel.i, nodeId=(-1) }
+bodies  : BodyInd=>Body  = for i. { ind=i, m=masses.i, pos=initPos.i, }
 
-' #### Step 1 Build the tree
+:p bodies
 
--- todo: pre-allocate, and expand when needed
--- todo: leaf value could be BodyInd or Body
+' #### Insert all elements
 
-def buildTree (bodies:BodyInd=>Body) : Tree Body = 
-  initTree : Tree Body = AsList _ []
-  yieldState initTree \tls.
-    for i:BodyInd.
-      body:Body = bodies.i
-      pNode = 0
-      leaf:Node Body = Leaf body pNode
-      append tls leaf
-      ()
+insertElement' = insertElement decide initNodeDataFn
+updateAllNodeData' = updateAllNodeData updateBranchData
 
-:p buildTree bodies
+def buildTree (bodies:BodyInd=>Body) : Tree Body NodeData NodeId = 
+    initTree = TreeArray (0@_) for i. Unused
+    tree = yieldState initTree \t.
+        for i. t:= insertElement' (get t) bodies.i
+    updateAllNodeData' tree
 
-' #### Step 2 Update center of mass for each node
+tree = buildTree bodies
+:p tree
 
-' #### Step 3 Estimate force on each body
+' #### Estimate N-body forces
 
-' #### Step 4 Update pos and vel of each body, on this time step
+-- gravity = 6.674286e-11  -- units?
+gravity = 6.67
 
-' #### Evolve over time steps 
+def force (otherpos:Vec D) (othermass:Float) (pos:Vec D) : Vec D = 
+    case otherpos == pos of
+        True -> zero
+        False -> 
+            diff = otherpos - pos
+            distance = sqrt $ vdot diff diff
+            gf = gravity * othermass / (sq distance)
+            gf .* diff / distance
+
+def force' (nodedata:NodeData) (pos:Vec D) : Vec D = 
+    mass = getAt #m nodedata
+    com = getAt #com nodedata
+    force com mass pos
+
+def widthDistanceRatio (n:Node Body NodeData NodeId) (pos:Vec D) : Float = 
+    nodedata = getNodeData n
+    width = bbWidth $ getAt #bb nodedata
+    diff = pos - (getAt #com nodedata)
+    distance = sqrt $ vdot diff diff
+    width/distance
+
+def dequeue (q:List a) : (a&(List a)) = 
+    (AsList _ arr) = q
+    (head arr, tail arr 1)
+
+def enqueue' (q:List NodeId) (cnodes:(Fin S)=>(Maybe NodeId)) : List NodeId = 
+    yieldAccum (ListMonoid NodeId) \l. for i.
+        cnode = cnodes.i
+        if (isJust cnode) 
+            then append l (fromJust cnode)
+
+def probe (tree:Tree Body NodeData NodeId) (theta:Float) (pos:Vec D)
+    : ((List NodeId) & Vec D) = 
+    (TreeArray _ arr) = tree
+    initQueue = (AsList _ [0@_]) -- assume at least one node in tree
+    runState zero \forceRef.
+        yieldState initQueue \qRef.
+            while \().
+                (id, newq) = dequeue (get qRef)
+                node = arr.id
+                qRef := newq
+                ratio = widthDistanceRatio node pos
+                case ratio <= theta of
+                    True -> -- long range force
+                        nodedata = getNodeData node
+                        forceRef := (get forceRef) + (force' nodedata pos)
+                    False -> -- short range force
+                        case node of 
+                            Unused -> error "haha nope"
+                            Leaf _ _ nodedata ->
+                                forceRef := (get forceRef) + (force' nodedata pos)
+                            Branch cnodes _ _ ->
+                                qRef := enqueue' (get qRef) cnodes
+                (listLength (get qRef) > 0)
+
+def pairwiseProbe (bodies:BodyInd=>Body) (pos:Vec D) : Vec D= 
+    yieldAccum (AddMonoid Float) \forceRef.
+        for i. 
+            body = bodies.i
+            m = getAt #m body
+            p = getAt #pos body
+            forceRef += force p m pos
+
+testPos = [1.0, 1.0]
+
+%time
+probe tree (-1.0) testPos
+
+%time
+pairwiseProbe bodies testPos
+
+
+(TreeArray _ arr) = tree
+for i.
+    node = arr.i
+    case node of
+        Branch _ _ _ -> widthDistanceRatio node testPos
+        Leaf _ _ _ -> widthDistanceRatio node testPos
+        Unused -> (-1.)
+
+cnodes = case arr.(1@_) of
+    Branch cnodes _ _ -> cnodes
+enqueue' (AsList _ []) cnodes
+
+sum for i.
+    node = arr.i
+    case node of
+        Branch _ _ nodedata -> zero
+        Leaf _ _ nodedata -> force' nodedata testPos
+        Unused -> zero
+
+
+q = (AsList _ [0,1,2,3])
+
+dequeue q
+
