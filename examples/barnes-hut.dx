@@ -2,10 +2,10 @@
 ' ## Barnes-Hut algorithm for the N body problem
 https://jheer.github.io/barnes-hut/
 
+' ### Quadtree
+
 D = 2
 S = intpow2 D
-
-' ### Quadtree 
 
 data Node a b node =
     Branch cnodes:((Fin S)=>(Maybe node))   pnode:(Maybe node)  nodedata:b
@@ -34,8 +34,8 @@ def getNodeData (n:Node a b node) : b =
 
 -- API
 def insertElement 
-    (decide:(Node a b node)->a->(Fin S))
-    (initNodeData:(Node a b node)->a->b)
+    (decide:(Node a b node)->a->(Fin S)) -- domain specific
+    (initNodeData:(Node a b node)->a->b) -- domain specific
     (tree:Tree a b node)
     (val:a)
     : Tree a b node = 
@@ -89,8 +89,10 @@ def insertElement
     TreeArray newHead newArr
 
 -- todo this can be combined with insertElement in theory
+-- API
 def updateAllNodeData
     (updateBranchData:(Tree a b node)->(Node a b node)->(Node a b node))
+    -- domain specific
     (tree:Tree a b node) : Tree a b node = 
     (TreeArray headId arr) = tree
     (AsList _ branchIds) = argFilter isBranch arr
@@ -214,30 +216,6 @@ def updateBranchData
                 setAt #com [xbar, ybar]
             (Branch cnodes pnode nodedata')
 
-' ### Test
-
-' #### Synthetic data
-
-[k1,k2] = splitKey (newKey 0)
-initPos : BodyInd=>Vec 2 = arb k1
-masses  : BodyInd=>Float = one
-bodies  : BodyInd=>Body  = for i. { ind=i, m=masses.i, pos=initPos.i, }
-
-:p bodies
-
-' #### Insert all elements
-
-insertElement' = insertElement decide initNodeDataFn
-updateAllNodeData' = updateAllNodeData updateBranchData
-
-def buildTree (bodies:BodyInd=>Body) : Tree Body NodeData NodeId = 
-    initTree = TreeArray (0@_) for i. Unused
-    tree = yieldState initTree \t.
-        for i. t:= insertElement' (get t) bodies.i
-    updateAllNodeData' tree
-
-tree = buildTree bodies
-:p tree
 
 ' #### Estimate N-body forces
 
@@ -270,17 +248,17 @@ def dequeue (q:List a) : (a&(List a)) =
     (head arr, tail arr 1)
 
 def enqueue' (q:List NodeId) (cnodes:(Fin S)=>(Maybe NodeId)) : List NodeId = 
-    yieldAccum (ListMonoid NodeId) \l. for i.
+    q <> yieldAccum (ListMonoid NodeId) \l. for i.
         cnode = cnodes.i
         if (isJust cnode) 
             then append l (fromJust cnode)
 
-def probe (tree:Tree Body NodeData NodeId) (theta:Float) (pos:Vec D)
-    : ((List NodeId) & Vec D) = 
+-- API
+def probe (tree:Tree Body NodeData NodeId) (theta:Float) (pos:Vec D) : Vec D = 
     (TreeArray _ arr) = tree
     initQueue = (AsList _ [0@_]) -- assume at least one node in tree
-    runState zero \forceRef.
-        yieldState initQueue \qRef.
+    yieldState zero \forceRef.
+        withState initQueue \qRef.
             while \().
                 (id, newq) = dequeue (get qRef)
                 node = arr.id
@@ -292,7 +270,7 @@ def probe (tree:Tree Body NodeData NodeId) (theta:Float) (pos:Vec D)
                         forceRef := (get forceRef) + (force' nodedata pos)
                     False -> -- short range force
                         case node of 
-                            Unused -> error "haha nope"
+                            Unused -> error "impossible to reach"
                             Leaf _ _ nodedata ->
                                 forceRef := (get forceRef) + (force' nodedata pos)
                             Branch cnodes _ _ ->
@@ -307,36 +285,55 @@ def pairwiseProbe (bodies:BodyInd=>Body) (pos:Vec D) : Vec D=
             p = getAt #pos body
             forceRef += force p m pos
 
-testPos = [1.0, 1.0]
+' ### Test
+
+' #### Synthetic data
+
+[k1,k2] = splitKey (newKey 0)
+initPos : BodyInd=>Vec 2 = arb k1
+masses  : BodyInd=>Float = one
+bodies  : BodyInd=>Body  = for i. { ind=i, m=masses.i, pos=initPos.i, }
+
+:p bodies
+
+' #### Insert all elements
+
+insertElement' = insertElement decide initNodeDataFn
+updateAllNodeData' = updateAllNodeData updateBranchData
+
+def buildTree (bodies:BodyInd=>Body) : Tree Body NodeData NodeId = 
+    initTree = TreeArray (0@_) for i. Unused
+    tree = yieldState initTree \t.
+        for i. t:= insertElement' (get t) bodies.i
+    updateAllNodeData' tree
 
 %time
-probe tree (-1.0) testPos
+tree = buildTree bodies
+:p tree
+
+
+' #### Probing
+
+' $\theta = 0.0$ makes sure that all leaves are reached
+
+testPos1 = [1.0, 1.0]
 
 %time
-pairwiseProbe bodies testPos
+probe tree (0.0) testPos1
+
+%time
+pairwiseProbe bodies testPos1
 
 
-(TreeArray _ arr) = tree
-for i.
-    node = arr.i
-    case node of
-        Branch _ _ _ -> widthDistanceRatio node testPos
-        Leaf _ _ _ -> widthDistanceRatio node testPos
-        Unused -> (-1.)
+' Increasing $\theta$ allows for faster but less accutate result
 
-cnodes = case arr.(1@_) of
-    Branch cnodes _ _ -> cnodes
-enqueue' (AsList _ []) cnodes
+testPos2 = [10., 10.]
 
-sum for i.
-    node = arr.i
-    case node of
-        Branch _ _ nodedata -> zero
-        Leaf _ _ nodedata -> force' nodedata testPos
-        Unused -> zero
+%time
+probe tree (0.0) testPos2
 
+%time
+probe tree (0.2) testPos2
 
-q = (AsList _ [0,1,2,3])
-
-dequeue q
-
+%time
+probe tree (5.0) testPos2
