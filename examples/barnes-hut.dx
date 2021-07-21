@@ -32,6 +32,7 @@ def getNodeData (n:Node a b node) : b =
         Leaf _ _ nodedata -> nodedata
         Unused -> error "cannot get nodedata of unused node"
 
+-- todo refactor
 -- API
 def insertElement 
     (decide:(Node a b node)->a->(Fin S)) -- domain specific
@@ -89,6 +90,8 @@ def insertElement
     TreeArray newHead newArr
 
 -- todo this can be combined with insertElement in theory
+-- pro: compute center of masses in one go
+-- con: may complicate insertElement
 -- API
 def updateAllNodeData
     (updateBranchData:(Tree a b node)->(Node a b node)->(Node a b node))
