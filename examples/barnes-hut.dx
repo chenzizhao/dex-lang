@@ -16,7 +16,7 @@ data Tree a b node =
     TreeArray head:node     arr:(node=>(Node a b node))
 
 def replaceInTable [Eq n] (ind:n) (val:v) (vals:n=>v): n=>v = 
-    for i. if i==ind then val else vals.i
+    yieldState vals \ref. ref!ind := val
 
 def (+!) (n:a) (m:Int) : a = ((ordinal n) + m)@_
 
