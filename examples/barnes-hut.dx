@@ -32,9 +32,49 @@ def getNodeData (n:Node a b node) : b =
         Leaf _ _ nodedata -> nodedata
         Unused -> error "cannot get nodedata of unused node"
 
--- todo refactor
+def extendLeaf1 [Eq node]
+    (initNodeData:(Node a b node)->a->b) -- domain specific
+    (tree:Tree a b node)
+    (leafid:node)
+    (valsid:(Fin S))
+    (val:a)
+    : ((Tree a b node)&node) =
+    (TreeArray headId arr) = tree
+    (leafdata,leafpid,leafnodedata) = case arr.leafid of
+        Leaf leafdata leafpid leafnodedata -> (leafdata,leafpid,leafnodedata)
+    cnodes = (for _. Nothing) |> (replaceInTable valsid (Just headId))
+    newbranch = Branch cnodes leafpid leafnodedata
+    newleaf = Leaf leafdata (Just leafid) (initNodeData newbranch leafdata)
+    newarr = arr |>
+        (replaceInTable leafid newbranch) |>
+        (replaceInTable headId newleaf)
+    ((TreeArray (headId+!1) newarr), headId)
+
+def extendLeaf2 [Eq node]
+    (initNodeData:(Node a b node)->a->b) -- domain specific
+    (tree:Tree a b node)
+    (leafid:node)
+    (leafsid:(Fin S))
+    (valsid:(Fin S))
+    (val:a)
+    : (Tree a b node) =
+    (TreeArray headId arr) = tree
+    (leafdata,leafpid,leafnodedata) = case arr.leafid of
+        Leaf leafdata leafpid leafnodedata -> (leafdata,leafpid,leafnodedata)
+    cnodes = (for _. Nothing) |> 
+        (replaceInTable leafsid (Just headId)) |> 
+        (replaceInTable valsid (Just (headId+!1)))
+    newbranch = Branch cnodes leafpid leafnodedata
+    newleaf = Leaf leafdata (Just leafid) (initNodeData newbranch leafdata)
+    newval = Leaf val (Just leafid) (initNodeData newbranch val)
+    newarr = arr |>
+        (replaceInTable leafid newbranch) |>
+        (replaceInTable headId newleaf) |>
+        (replaceInTable (headId+!1) newval)
+    (TreeArray (headId+!2) newarr)
+
 -- API
-def insertElement 
+def insertElement [Eq node]
     (decide:(Node a b node)->a->(Fin S)) -- domain specific
     (initNodeData:(Node a b node)->a->b) -- domain specific
     (tree:Tree a b node)
@@ -57,37 +97,47 @@ def insertElement
                         Nothing -> False
     -- modify the tree
     pnode = arr.pId
-    (newHead, newArr) = case pnode of 
+    case pnode of 
         Unused ->
-            newArr = yieldState arr \ref.
-                ref!pId := Leaf val Nothing (initNodeData pnode val)
-            newHead = headId +! 1
-            (newHead, newArr)
-        Branch cnodes ppnode bdata->
-            newArr = yieldState arr \ref.
-                valId = headId
-                ref!valId := Leaf val (Just pId) (initNodeData pnode val)
-                valSId = decide pnode val
-                newcnodes = cnodes |> (replaceInTable valSId (Just valId))
-                ref!pId := Branch newcnodes ppnode bdata
-            newHead = headId +! 1
-            (newHead, newArr)
-        Leaf pval ppnode pdata -> 
-            newArr = yieldState arr \ref.
-                valId:node = headId +! 1
-                ref!headId := Leaf pval (Just pId) (initNodeData pnode pval)
-                ref!valId := Leaf val (Just pId) (initNodeData pnode val)
-                headSId = decide pnode pval
-                valSId = decide pnode val
-                -- todo iterate until headSId != valSid
-                cnodes = (for i. Nothing) |>
-                    (replaceInTable headSId (Just headId)) |>
-                    (replaceInTable valSId (Just valId))
-                ref!pId := Branch cnodes ppnode pdata -- all about BBox
-            newHead = headId +! 2
-            (newHead, newArr)
-    -- repack
-    TreeArray newHead newArr
+            newleaf = Leaf val Nothing (initNodeData pnode val)
+            newarr = arr |> 
+                (replaceInTable pId newleaf)
+            TreeArray (headId+!1) newarr
+        Branch cnodes ppnode bdata ->
+            valsid = decide pnode val
+            newcnodes = cnodes |> 
+                (replaceInTable valsid (Just headId)) -- overwriting Nothing
+            newbranch = Branch newcnodes ppnode bdata
+            newleaf = Leaf val (Just pId) (initNodeData pnode val)
+            newarr = arr |>
+                (replaceInTable pId newbranch) |>
+                (replaceInTable headId newleaf)
+            TreeArray (headId+!1) newarr
+        Leaf pval _ _ ->
+            extendLeaf1' = extendLeaf1 initNodeData
+            extendLeaf2' = extendLeaf2 initNodeData
+            -- uses pval and tree
+            -- push this leaf down, until psid != valsid
+            (newpid, newtree) = runState tree \tref.
+                yieldState pId \leafidref.
+                    while \().
+                        tree = get tref
+                        leafid = get leafidref
+                        (TreeArray _ arr) = tree
+                        psid = decide arr.leafid pval
+                        valsid = decide arr.leafid val
+                        case psid == valsid of
+                            True ->
+                                (newtree, newleafid) = extendLeaf1' tree leafid valsid val
+                                tref := newtree
+                                leafidref := newleafid
+                                True
+                            False -> False
+            -- safely replace newleaf with a branch of two leaves: pval and val
+            (TreeArray _ newarr) = newtree
+            leafsid = decide newarr.newpid pval
+            valsid = decide newarr.newpid val
+            extendLeaf2' newtree newpid leafsid valsid val
 
 -- todo this can be combined with insertElement in theory
 -- pro: compute center of masses in one go
@@ -109,7 +159,7 @@ def updateAllNodeData
 ' ### Domain specific setups
 
 NodeId = Fin 20
-BodyInd = Fin 5
+BodyInd = Fin 8
 def Vec (d:Int) : Type = (Fin d)=>Float
 BBox = ((Vec D)&(Vec D))
 
@@ -293,10 +343,11 @@ def pairwiseProbe (bodies:BodyInd=>Body) (pos:Vec D) : Vec D=
 ' #### Synthetic data
 
 [k1,k2] = splitKey (newKey 0)
-initPos : BodyInd=>Vec 2 = arb k1
+initPos : BodyInd=>Vec D = arb k1
 masses  : BodyInd=>Float = one
 bodies  : BodyInd=>Body  = for i. { ind=i, m=masses.i, pos=initPos.i, }
 
+:p initPos
 :p bodies
 
 ' #### Insert all elements
