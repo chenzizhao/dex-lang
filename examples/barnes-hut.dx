@@ -158,8 +158,8 @@ def updateAllNodeData
 
 ' ### Domain specific setups
 
-NodeId = Fin 20
-BodyInd = Fin 8
+NodeId = Fin 20000
+BodyInd = Fin 10000
 def Vec (d:Int) : Type = (Fin d)=>Float
 BBox = ((Vec D)&(Vec D))
 
@@ -347,8 +347,8 @@ initPos : BodyInd=>Vec D = arb k1
 masses  : BodyInd=>Float = one
 bodies  : BodyInd=>Body  = for i. { ind=i, m=masses.i, pos=initPos.i, }
 
-:p initPos
-:p bodies
+-- :p initPos
+-- :p bodies
 
 ' #### Insert all elements
 
@@ -363,7 +363,7 @@ def buildTree (bodies:BodyInd=>Body) : Tree Body NodeData NodeId =
 
 %time
 tree = buildTree bodies
-:p tree
+-- :p tree
 
 
 ' #### Probing
@@ -372,22 +372,48 @@ tree = buildTree bodies
 
 testPos1 = [1.0, 1.0]
 
-%time
-probe tree (0.0) testPos1
+-- %time
+-- probe tree (0.0) testPos1
+-- 
+-- %time
+-- pairwiseProbe bodies testPos1
+-- 
+-- 
+-- ' Increasing $\theta$ allows for faster but less accutate result
+-- 
+-- testPos2 = [10., 10.]
+-- 
+-- %time
+-- probe tree (0.0) testPos2
+-- 
+-- %time
+-- probe tree (0.2) testPos2
+-- 
+-- %time
+-- probe tree (5.0) testPos2
+
+' Is BH faster than bruteforce? 
+
+-- %time
+-- probe tree (1.5) testPos1
+
+-- %time
+-- probe tree (0.5) testPos1
+-- 
+-- %time
+-- probe tree (0.0) testPos1
+
+-- %time
+-- pairwiseProbe bodies testPos1
 
 %time
-pairwiseProbe bodies testPos1
-
-
-' Increasing $\theta$ allows for faster but less accutate result
-
-testPos2 = [10., 10.]
+forces1 = for i. probe tree (1.0) initPos.i
 
 %time
-probe tree (0.0) testPos2
+forces2 = for i. pairwiseProbe bodies initPos.i
 
-%time
-probe tree (0.2) testPos2
+loss = mean $ for i. 
+    diff = forces1.i - forces2.i
+    vdot diff diff
 
-%time
-probe tree (5.0) testPos2
+:p loss
