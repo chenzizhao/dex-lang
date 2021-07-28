@@ -372,39 +372,28 @@ tree = buildTree bodies
 
 testPos1 = [1.0, 1.0]
 
--- %time
--- probe tree (0.0) testPos1
--- 
--- %time
--- pairwiseProbe bodies testPos1
--- 
--- 
--- ' Increasing $\theta$ allows for faster but less accutate result
--- 
--- testPos2 = [10., 10.]
--- 
--- %time
--- probe tree (0.0) testPos2
--- 
--- %time
--- probe tree (0.2) testPos2
--- 
--- %time
--- probe tree (5.0) testPos2
+%time
+probe tree (0.0) testPos1
+
+%time
+pairwiseProbe bodies testPos1
+
+
+' Increasing $\theta$ allows for faster but less accutate result
+
+testPos2 = [10., 10.]
+
+%time
+probe tree (0.0) testPos2
+
+%time
+probe tree (0.2) testPos2
+
+%time
+probe tree (5.0) testPos2
 
 ' Is BH faster than bruteforce? 
-
--- %time
--- probe tree (1.5) testPos1
-
--- %time
--- probe tree (0.5) testPos1
--- 
--- %time
--- probe tree (0.0) testPos1
-
--- %time
--- pairwiseProbe bodies testPos1
+Yes, only when body number > 40000
 
 %time
 forces1 = for i. probe tree (1.0) initPos.i
@@ -412,8 +401,8 @@ forces1 = for i. probe tree (1.0) initPos.i
 %time
 forces2 = for i. pairwiseProbe bodies initPos.i
 
-loss = mean $ for i. 
+loss = mean for i.
     diff = forces1.i - forces2.i
-    vdot diff diff
+    sum $ map abs diff
 
 :p loss
