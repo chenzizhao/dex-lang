@@ -336,7 +336,7 @@ def pairwiseProbe (bodies:BodyInd=>Body) (pos:Vec D) : Vec D=
 ' #### Synthetic data
 
 [k1,k2] = splitKey (newKey 0)
-initPos : BodyInd=>Vec D = arb k1
+initPos : BodyInd=>Vec D = for i j. rand $ ixkey2 k1 i j
 masses  : BodyInd=>Float = one
 bodies  : BodyInd=>Body  = for i. { ind=i, m=masses.i, pos=initPos.i, }
 
