@@ -12,8 +12,7 @@ data Node a b node =
     Leaf   leafdata:a                       pnode:(Maybe node)  nodedata:b
     Unused
 
-data Tree a b node =
-    TreeArray head:node     arr:(node=>(Node a b node))
+def Tree (a:Type) (b:Type) (node:Type) : Type = node => (Node a b node)
 
 def replaceInTable [Eq n] (ind:n) (val:v) (vals:n=>v): n=>v = 
     yieldState vals \ref. ref!ind := val
@@ -32,33 +31,35 @@ def getNodeData (n:Node a b node) : b =
         Leaf _ _ nodedata -> nodedata
         Unused -> error "cannot get nodedata of unused node"
 
-def extendLeaf1 [Eq node]
+def extendLeaf1
     (initNodeData:(Node a b node)->a->b) -- domain specific
-    (tree:Tree a b node)
+    (headIdref:Ref h1 node) (arrref:Ref h2 (Tree a b node))
     (leafid:node)
     (valsid:(Fin S))
     (val:a)
-    : ((Tree a b node)&node) =
-    (TreeArray headId arr) = tree
+    : {State h1, State h2|eff} node =
+    headId = get headIdref
+    arr = get arrref
     (leafdata,leafpid,leafnodedata) = case arr.leafid of
         Leaf leafdata leafpid leafnodedata -> (leafdata,leafpid,leafnodedata)
     cnodes = (for _. Nothing) |> (replaceInTable valsid (Just headId))
     newbranch = Branch cnodes leafpid leafnodedata
     newleaf = Leaf leafdata (Just leafid) (initNodeData newbranch leafdata)
-    newarr = arr |>
-        (replaceInTable leafid newbranch) |>
-        (replaceInTable headId newleaf)
-    ((TreeArray (headId+!1) newarr), headId)
+    arrref!leafid := newbranch
+    arrref!headId := newleaf
+    headIdref := headId+!1
+    headId
 
-def extendLeaf2 [Eq node]
+def extendLeaf2
     (initNodeData:(Node a b node)->a->b) -- domain specific
-    (tree:Tree a b node)
+    (headIdref:Ref h1 node) (arrref:Ref h2 (Tree a b node))
     (leafid:node)
     (leafsid:(Fin S))
     (valsid:(Fin S))
     (val:a)
-    : (Tree a b node) =
-    (TreeArray headId arr) = tree
+    : {State h1, State h2|eff} Unit =
+    headId = get headIdref
+    arr = get arrref
     (leafdata,leafpid,leafnodedata) = case arr.leafid of
         Leaf leafdata leafpid leafnodedata -> (leafdata,leafpid,leafnodedata)
     cnodes = (for _. Nothing) |> 
@@ -67,22 +68,17 @@ def extendLeaf2 [Eq node]
     newbranch = Branch cnodes leafpid leafnodedata
     newleaf = Leaf leafdata (Just leafid) (initNodeData newbranch leafdata)
     newval = Leaf val (Just leafid) (initNodeData newbranch val)
-    newarr = arr |>
-        (replaceInTable leafid newbranch) |>
-        (replaceInTable headId newleaf) |>
-        (replaceInTable (headId+!1) newval)
-    (TreeArray (headId+!2) newarr)
+    arrref!leafid := newbranch
+    arrref!headId := newleaf
+    arrref!(headId+!1) := newval
+    headIdref := headId+!2
 
--- API
-def insertElement [Eq node]
-    (decide:(Node a b node)->a->(Fin S)) -- domain specific
-    (initNodeData:(Node a b node)->a->b) -- domain specific
-    (tree:Tree a b node)
+def parentOfVal
+    (decide:(Node a b node)->a->(Fin S)) 
+    (arr:Tree a b node) 
     (val:a)
-    : Tree a b node = 
-    (TreeArray headId arr) = tree
-    -- find appropriate parent node (read only)
-    pId:node = yieldState (0@_) \cid.
+    : node = 
+    yieldState (0@_) \cid.
         while \(). 
             cnode = arr.(get cid)
             case cnode of
@@ -95,49 +91,52 @@ def insertElement [Eq node]
                             cid := id
                             True
                         Nothing -> False
+
+-- API
+def insertElement
+    (decide:(Node a b node)->a->(Fin S)) -- domain specific
+    (initNodeData:(Node a b node)->a->b) -- domain specific
+    (headIdref:Ref h1 node) (arrref:Ref h2 (Tree a b node))
+    (val:a)
+    : {State h1, State h2|eff} Unit =
+    headId = get headIdref
+    arr = get arrref
+    -- find appropriate parent node (read only)
+    pId:node = parentOfVal decide arr val
     -- modify the tree
     pnode = arr.pId
     case pnode of 
         Unused ->
             newleaf = Leaf val Nothing (initNodeData pnode val)
-            newarr = arr |> 
-                (replaceInTable pId newleaf)
-            TreeArray (headId+!1) newarr
+            arrref!pId := newleaf
+            headIdref := headId+!1
         Branch cnodes ppnode bdata ->
             valsid = decide pnode val
             newcnodes = cnodes |> 
                 (replaceInTable valsid (Just headId)) -- overwriting Nothing
             newbranch = Branch newcnodes ppnode bdata
             newleaf = Leaf val (Just pId) (initNodeData pnode val)
-            newarr = arr |>
-                (replaceInTable pId newbranch) |>
-                (replaceInTable headId newleaf)
-            TreeArray (headId+!1) newarr
+            arrref!pId := newbranch
+            arrref!headId := newleaf
+            headIdref := headId+!1
         Leaf pval _ _ ->
-            extendLeaf1' = extendLeaf1 initNodeData
-            extendLeaf2' = extendLeaf2 initNodeData
             -- uses pval and tree
             -- push this leaf down, until psid != valsid
-            (newpid, newtree) = runState tree \tref.
-                yieldState pId \leafidref.
-                    while \().
-                        tree = get tref
-                        leafid = get leafidref
-                        (TreeArray _ arr) = tree
-                        psid = decide arr.leafid pval
-                        valsid = decide arr.leafid val
-                        case psid == valsid of
-                            True ->
-                                (newtree, newleafid) = extendLeaf1' tree leafid valsid val
-                                tref := newtree
-                                leafidref := newleafid
-                                True
-                            False -> False
-            -- safely replace newleaf with a branch of two leaves: pval and val
-            (TreeArray _ newarr) = newtree
-            leafsid = decide newarr.newpid pval
-            valsid = decide newarr.newpid val
-            extendLeaf2' newtree newpid leafsid valsid val
+            withState pId \leafidref.
+                extendLeaf1' = extendLeaf1 initNodeData headIdref arrref
+                extendLeaf2' = extendLeaf2 initNodeData headIdref arrref
+                while \().
+                    leafid = get leafidref
+                    arr = get arrref
+                    psid = decide arr.leafid pval
+                    valsid = decide arr.leafid val
+                    case psid == valsid of
+                        True ->
+                            leafidref := extendLeaf1' leafid valsid val
+                            True
+                        False -> 
+                            extendLeaf2' leafid psid valsid val
+                            False
 
 -- todo this can be combined with insertElement in theory
 -- pro: compute center of masses in one go
@@ -146,15 +145,11 @@ def insertElement [Eq node]
 def updateAllNodeData
     (updateBranchData:(Tree a b node)->(Node a b node)->(Node a b node))
     -- domain specific
-    (tree:Tree a b node) : Tree a b node = 
-    (TreeArray headId arr) = tree
+    (arr:Tree a b node) : Tree a b node = 
     (AsList _ branchIds) = argFilter isBranch arr
-    arr2 = yieldState arr \ref. rof i.
-        ctree = TreeArray headId (get ref)
+    yieldState arr \ref. rof i.
         cbranch = get $ ref!(branchIds.i)
-        ref!(branchIds.i) := updateBranchData ctree cbranch
-    (TreeArray headId arr2)
-
+        ref!(branchIds.i) := updateBranchData (get ref) cbranch
 
 ' ### Domain specific setups
 
@@ -238,10 +233,9 @@ def decide (pnode:Node Body NodeData NodeId) (val:Body) : (Fin S) =
 ' #### One function needed in updateAllNodeData
 
 def summarizeChildNodes
-    (tree:Tree Body NodeData NodeId)
+    (arr:Tree Body NodeData NodeId)
     (cnodes:(Fin S)=>(Maybe NodeId))
     : (Float & Float & Float) =
-    (TreeArray _ arr) = tree
     [m, xmom, ymom] = yieldAccum (AddMonoid Float) \ref. 
         for i.
             cnode = cnodes.i
@@ -307,8 +301,7 @@ def enqueue' (q:List NodeId) (cnodes:(Fin S)=>(Maybe NodeId)) : List NodeId =
             then append l (fromJust cnode)
 
 -- API
-def probe (tree:Tree Body NodeData NodeId) (theta:Float) (pos:Vec D) : Vec D = 
-    (TreeArray _ arr) = tree
+def probe (arr:Tree Body NodeData NodeId) (theta:Float) (pos:Vec D) : Vec D = 
     initQueue = (AsList _ [0@_]) -- assume at least one node in tree
     yieldState zero \forceRef.
         withState initQueue \qRef.
@@ -352,13 +345,14 @@ bodies  : BodyInd=>Body  = for i. { ind=i, m=masses.i, pos=initPos.i, }
 
 ' #### Insert all elements
 
-insertElement' = insertElement decide initNodeDataFn
-updateAllNodeData' = updateAllNodeData updateBranchData
-
 def buildTree (bodies:BodyInd=>Body) : Tree Body NodeData NodeId = 
-    initTree = TreeArray (0@_) for i. Unused
-    tree = yieldState initTree \t.
-        for i. t:= insertElement' (get t) bodies.i
+    inithead = 0@NodeId
+    initarr  = for i. Unused
+    tree = withState inithead \headIdref.
+        yieldState initarr \arrref.
+            insertElement' = insertElement decide initNodeDataFn headIdref arrref
+            for i. insertElement' bodies.i
+    updateAllNodeData' = updateAllNodeData updateBranchData
     updateAllNodeData' tree
 
 %time
