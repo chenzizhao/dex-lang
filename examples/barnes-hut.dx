@@ -49,7 +49,7 @@ def extendLeaf1
     (leafid:node)
     (valsid:(Fin S))
     (val:a)
-    : {State h1, State h2|eff} node =
+    : {State h1, State h2} node =
     headId = get headIdref
     arr = get arrref
     (leafdata,leafpid,leafnodedata) = case arr.leafid of
@@ -69,7 +69,7 @@ def extendLeaf2
     (leafsid:(Fin S))
     (valsid:(Fin S))
     (val:a)
-    : {State h1, State h2|eff} Unit =
+    : {State h1, State h2} Unit =
     headId = get headIdref
     arr = get arrref
     (leafdata,leafpid,leafnodedata) = case arr.leafid of
@@ -110,7 +110,7 @@ def insertElement
     (initNodeData:(Node a b node)->a->b) -- domain specific
     (headIdref:Ref h1 node) (arrref:Ref h2 (Tree a b node))
     (val:a)
-    : {State h1, State h2|eff} Unit =
+    : {State h1, State h2} Unit =
     headId = get headIdref
     arr = get arrref
     -- find appropriate parent node (read only)
