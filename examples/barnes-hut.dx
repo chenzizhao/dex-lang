@@ -25,6 +25,18 @@ def isBranch (n:Node a b node) : Bool =
         Leaf _ _ _ -> False
         Unused -> False
 
+def isLeaf (n:Node a b node) : Bool = 
+    case n of
+        Branch _ _ _ -> False
+        Leaf _ _ _ -> True
+        Unused -> False
+
+def isUnused (n:Node a b node) : Bool = 
+    case n of
+        Branch _ _ _ -> False
+        Leaf _ _ _ -> False
+        Unused -> True
+
 def getNodeData (n:Node a b node) : b = 
     case n of
         Branch _ _ nodedata -> nodedata
@@ -196,13 +208,16 @@ def subBox ((low, high):BBox) (pos:Vec D) : BBox =
     newhigh = for d. newlow.d + half
     (newlow, newhigh)
 
+subBox ([0.5, 0.5], [1.0,1.0]) [0.51, 0.76]
+subQuad ([0.5, 0.5], [1.0,1.0]) [0.51, 0.76]
+
 ' #### Two functions needed in insertElement
 
 -- API
 def initNodeDataFn (pnode:Node Body NodeData NodeId) (val:Body) : NodeData = 
     case pnode of 
         Unused -> 
-            bbox = ([-2., -2.], [2.,2.])
+            bbox = ([0., 0.], [1.,1.])
             pos = getAt #pos val
             { bb=bbox, m=(getAt #m val), com=pos }
         Leaf _ _ nodedata ->
@@ -359,6 +374,37 @@ def buildTree (bodies:BodyInd=>Body) : Tree Body NodeData NodeId =
 tree = buildTree bodies
 -- :p tree
 
+depths = 
+    (AsList _ leaves) = argFilter isLeaf tree
+    unsafeCastTable BodyInd for i.
+        yieldState (-1) \count.
+            withState (Just leaves.i) \nref.
+                while \().
+
+                    case (get nref) of
+                        Just node -> 
+                            pnode = case tree.node of
+                                Leaf _ pnode _ -> pnode
+                                Branch _ pnode _ -> pnode
+                            nref := pnode
+                            count := (get count) + 1
+                            True
+                        Nothing -> False
+
+:t depths
+
+:p minimum depths
+
+:p maximum depths
+
+:p mean $ map IToF depths
+
+:p std $ map IToF depths
+
+
+import plot
+[x,y] = transpose initPos
+:html showPlot $ xyPlot x y
 
 ' #### Probing
 
