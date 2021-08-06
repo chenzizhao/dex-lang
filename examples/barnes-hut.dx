@@ -45,11 +45,11 @@ def getNodeData (n:Node a b node) : b =
 
 def extendLeaf1
     (initNodeData:(Node a b node)->a->b) -- domain specific
-    (headIdref:Ref h1 node) (arrref:Ref h2 (Tree a b node))
+    (headIdref:Ref h node) (arrref:Ref h (Tree a b node))
     (leafid:node)
     (valsid:(Fin S))
     (val:a)
-    : {State h1, State h2} node =
+    : {State h} node =
     headId = get headIdref
     arr = get arrref
     (leafdata,leafpid,leafnodedata) = case arr.leafid of
@@ -64,12 +64,12 @@ def extendLeaf1
 
 def extendLeaf2
     (initNodeData:(Node a b node)->a->b) -- domain specific
-    (headIdref:Ref h1 node) (arrref:Ref h2 (Tree a b node))
+    (headIdref:Ref h node) (arrref:Ref h (Tree a b node))
     (leafid:node)
     (leafsid:(Fin S))
     (valsid:(Fin S))
     (val:a)
-    : {State h1, State h2} Unit =
+    : {State h} Unit =
     headId = get headIdref
     arr = get arrref
     (leafdata,leafpid,leafnodedata) = case arr.leafid of
@@ -108,9 +108,9 @@ def parentOfVal
 def insertElement
     (decide:(Node a b node)->a->(Fin S)) -- domain specific
     (initNodeData:(Node a b node)->a->b) -- domain specific
-    (headIdref:Ref h1 node) (arrref:Ref h2 (Tree a b node))
+    (headIdref:Ref h node) (arrref:Ref h (Tree a b node))
     (val:a)
-    : {State h1, State h2} Unit =
+    : {State h} Unit =
     headId = get headIdref
     arr = get arrref
     -- find appropriate parent node (read only)
@@ -363,10 +363,9 @@ bodies  : BodyInd=>Body  = for i. { ind=i, m=masses.i, pos=initPos.i, }
 def buildTree (bodies:BodyInd=>Body) : Tree Body NodeData NodeId = 
     inithead = 0@NodeId
     initarr  = for i. Unused
-    tree = withState inithead \headIdref.
-        yieldState initarr \arrref.
-            insertElement' = insertElement decide initNodeDataFn headIdref arrref
-            for i. insertElement' bodies.i
+    (_, tree) = yieldState (inithead, initarr) \ref.
+        insertElement' = insertElement decide initNodeDataFn (fstRef ref) (sndRef ref)
+        for i. insertElement' bodies.i
     updateAllNodeData' = updateAllNodeData updateBranchData
     updateAllNodeData' tree
 
