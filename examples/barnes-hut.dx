@@ -402,7 +402,9 @@ probe tree (5.0) testPos2
 Yes, only when body number > 40000
 
 %time
-forces1 = for i. probe tree (1.0) initPos.i
+forces1 =
+    probe' = probe tree (1.0)
+    for i. probe' initPos.i
 
 %time
 forces2 = for i. pairwiseProbe bodies initPos.i
