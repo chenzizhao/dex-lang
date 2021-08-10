@@ -18,6 +18,7 @@ def replaceInTable [Eq n] (ind:n) (val:v) (vals:n=>v): n=>v =
     yieldState vals \ref. ref!ind := val
 
 def (+!) (n:a) (m:Int) : a = ((ordinal n) + m)@_
+def (-!) (x:n) (z:Int) : n = ((ordinal x)-z)@n
 
 def isBranch (n:Node a b node) : Bool = 
     case n of
@@ -163,8 +164,8 @@ def updateAllNodeData
 
 ' ### Domain specific setups
 
-NodeId = Fin 20000
-BodyInd = Fin 10000
+NodeId = Fin 400
+BodyInd = Fin 200
 def Vec (d:Int) : Type = (Fin d)=>Float
 BBox = ((Vec D)&(Vec D))
 
@@ -303,25 +304,41 @@ def widthDistanceRatio (n:Node Body NodeData NodeId) (pos:Vec D) : Float =
     distance = sqrt $ vdot diff diff
     width/distance
 
-def dequeue (q:List a) : (a&(List a)) = 
-    (AsList _ arr) = q
-    (head arr, tail arr 1)
+def Stack (slot:Type) (a:Type) : Type = ((slot=>a)&slot)
 
-def enqueue' (q:List NodeId) (cnodes:(Fin S)=>(Maybe NodeId)) : List NodeId = 
-    q <> yieldAccum (ListMonoid NodeId) \l. for i.
-        cnode = cnodes.i
-        if (isJust cnode) 
-            then append l (fromJust cnode)
+def push (stackRef:Ref h (Stack slot a)) (x:a) : {State h} Unit =
+    arrRef = fstRef stackRef
+    headRef = sndRef stackRef
+    currHead = get headRef
+    arrRef!currHead := x
+    headRef := currHead +! 1
+
+def pop (stackRef:Ref h(Stack slot a)) (_:Unit) : {State h} a =
+    arrRef = fstRef stackRef
+    headRef = sndRef stackRef
+    currHead = get headRef
+    prevHead = currHead -! 1
+    x = get arrRef!prevHead
+    -- arrRef!prevHead := default
+    headRef := prevHead
+    x
+
+N = 50 -- ~ depth * 8 ~ log8 (N) * 8
+
+def initStack : Stack (Fin N) NodeId =
+    arr = for _. (0@NodeId)
+    (arr, 1@(Fin N))
 
 -- API
 def probe (arr:Tree Body NodeData NodeId) (theta:Float) (pos:Vec D) : Vec D = 
-    initQueue = (AsList _ [0@_]) -- assume at least one node in tree
     yieldState zero \forceRef.
-        withState initQueue \qRef.
+        withState initStack \sRef.
+            pop' = pop sRef
+            push' = push sRef
+            headRef = sndRef sRef
             while \().
-                (id, newq) = dequeue (get qRef)
+                id = pop' ()
                 node = arr.id
-                qRef := newq
                 ratio = widthDistanceRatio node pos
                 case ratio <= theta of
                     True -> -- long range force
@@ -333,8 +350,10 @@ def probe (arr:Tree Body NodeData NodeId) (theta:Float) (pos:Vec D) : Vec D =
                             Leaf _ _ nodedata ->
                                 forceRef := (get forceRef) + (force' nodedata pos)
                             Branch cnodes _ _ ->
-                                qRef := enqueue' (get qRef) cnodes
-                (listLength (get qRef) > 0)
+                                for i. if isJust cnodes.i
+                                    then push' (fromJust cnodes.i)
+                                ()
+                ((ordinal (get headRef)) > 0)
 
 def pairwiseProbe (bodies:BodyInd=>Body) (pos:Vec D) : Vec D= 
     yieldAccum (AddMonoid Float) \forceRef.
@@ -399,7 +418,7 @@ probe tree (0.2) testPos2
 probe tree (5.0) testPos2
 
 ' Is BH faster than bruteforce? 
-Yes, only when body number > 40000
+Yes, only when body number > 200 with $\theta$=1.0
 
 %time
 forces1 =
