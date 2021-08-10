@@ -1,0 +1,11 @@
+interface Functor a b f
+    fmap : (a->b) -> (a->f) -> (b->f)
+
+instance Functor Int Float (Maybe xx)
+    fmap = \t:(Int -> Float) af:(Int -> (Maybe xx)) bb:Float .
+        \aa:Int. af $ t aa
+
+-- fmap (IToF) (Just) : 
+-- a: int
+-- b: float
+-- f: Maybe float
