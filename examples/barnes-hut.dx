@@ -161,15 +161,11 @@ def updateAllNodeData
 
 ' ### Domain specific setups
 
--- Tune me!
-NodeId = Fin 400
-BodyInd = Fin 200
 def Vec (d:Int) : Type = (Fin d)=>Float
 BBox = ((Vec D)&(Vec D))
 
 Body = {
-    ind:BodyInd
-  & m:Float
+  m:Float
   & pos:Vec D
 }
 
@@ -206,7 +202,7 @@ def subBox ((low, high):BBox) (pos:Vec D) : BBox =
 ' #### Two functions needed in insertElement
 
 -- API
-def initNodeDataFn (pnode:Node Body NodeData NodeId) (val:Body) : NodeData = 
+def initNodeDataFn (pnode:Node body NodeData node) (val:Body) : NodeData =
     case pnode of 
         Unused -> 
             bbox = ([0., 0.], [1.,1.])
@@ -224,7 +220,7 @@ def initNodeDataFn (pnode:Node Body NodeData NodeId) (val:Body) : NodeData =
             { bb=bbox, m=(getAt #m val), com=pos }
 
 -- API
-def decide (pnode:Node Body NodeData NodeId) (val:Body) : (Fin S) = 
+def decide (pnode:Node body NodeData node) (val:Body) : (Fin S) =
     case pnode of 
         Unused -> error "Function decide shouldn't be called on unused node"
         Leaf _ _ nodedata ->
@@ -240,8 +236,8 @@ def decide (pnode:Node Body NodeData NodeId) (val:Body) : (Fin S) =
 ' #### One function needed in updateAllNodeData
 
 def summarizeChildNodes
-    (arrref:Ref h (Tree Body NodeData NodeId))
-    (cnodes:(Fin S)=>(Maybe NodeId))
+    (arrref:Ref h (Tree body NodeData node))
+    (cnodes:(Fin S)=>(Maybe node))
     : {State h} (Float & Float & Float) =
     [m, xmom, ymom] = yieldAccum (AddMonoid Float) \ref. 
         for i.
@@ -257,9 +253,9 @@ def summarizeChildNodes
 
 -- API
 def updateBranchData 
-    (arrref:Ref h (Tree Body NodeData NodeId))
-    (bnode:Node Body NodeData NodeId)
-    : {State h} Node Body NodeData NodeId =
+    (arrref:Ref h (Tree body NodeData node))
+    (bnode:Node Body NodeData node)
+    : {State h} Node body NodeData node =
     case bnode of 
         Leaf _ _ _ -> error "shouldn't be called on leaves"
         Unused -> error "shouldn't be called on unused nodes"
@@ -292,7 +288,7 @@ def force' (nodedata:NodeData) (pos:Vec D) : Vec D =
     com = getAt #com nodedata
     force com mass pos
 
-def widthDistanceRatio (n:Node Body NodeData NodeId) (pos:Vec D) : Float = 
+def widthDistanceRatio (n:Node body NodeData node) (pos:Vec D) : Float =
     nodedata = getNodeData n
     width = bbWidth $ getAt #bb nodedata
     diff = pos - (getAt #com nodedata)
@@ -325,12 +321,15 @@ def pop (stackRef:Ref h(Stack slot a)) (_:Unit) : {State h} a =
 -- Tune me!
 N_stack = 50 -- ~ depth * 8 ~ log8 (N) * 8
 
-def initStack : Stack (Fin N_stack) NodeId =
-    arr = for _. (0@NodeId)
-    (arr, 1@_)
+-- def initStack : Stack (Fin N_stack) NodeId =
+--     arr = for _. (0@NodeId)
+--     (arr, 1@_)
 
 -- API
-def probe (arr:Tree Body NodeData NodeId) (theta:Float) (pos:Vec D) : Vec D = 
+def probe (arr:Tree body NodeData node) (theta:Float) (pos:Vec D) : Vec D =
+    initStack : Stack (Fin N_stack) node =
+        arr = for _. (0@node)
+        (arr, 1@_)
     yieldState zero \forceRef.
         withState initStack \sRef.
             pop' = pop sRef
@@ -338,14 +337,14 @@ def probe (arr:Tree Body NodeData NodeId) (theta:Float) (pos:Vec D) : Vec D =
             headRef = sndRef sRef
             while \().
                 id = pop' ()
-                node = arr.id
-                ratio = widthDistanceRatio node pos
+                curr_node = arr.id
+                ratio = widthDistanceRatio curr_node pos
                 case ratio <= theta of
                     True -> -- long range force
-                        nodedata = getNodeData node
+                        nodedata = getNodeData curr_node
                         forceRef := (get forceRef) + (force' nodedata pos)
                     False -> -- short range force
-                        case node of 
+                        case curr_node of
                             Unused -> error "impossible to reach"
                             Leaf _ _ nodedata ->
                                 forceRef := (get forceRef) + (force' nodedata pos)
@@ -356,7 +355,7 @@ def probe (arr:Tree Body NodeData NodeId) (theta:Float) (pos:Vec D) : Vec D =
                 ((ordinal (get headRef)) > 0)
 
 -- API: Benchmark
-def pairwiseProbe (bodies:BodyInd=>Body) (pos:Vec D) : Vec D= 
+def pairwiseProbe (bodies:bodyid=>Body) (pos:Vec D) : Vec D =
     yieldAccum (AddMonoid Float) \forceRef.
         for i. 
             body = bodies.i
@@ -368,18 +367,21 @@ def pairwiseProbe (bodies:BodyInd=>Body) (pos:Vec D) : Vec D=
 
 ' #### Synthetic data
 
+-- Change me!
+BodyInd = Fin 200
+
 [k1,k2] = splitKey (newKey 0)
 initPos : BodyInd=>Vec D = for i j. rand $ ixkey2 k1 i j
 masses  : BodyInd=>Float = one *. 1.0e11
-bodies  : BodyInd=>Body  = for i. { ind=i, m=masses.i, pos=initPos.i, }
+bodies  : BodyInd=>Body  = for i. { m=masses.i, pos=initPos.i, }
 
 -- :p initPos
 -- :p bodies
 
 ' #### Insert all elements
 
-def buildTree (bodies:BodyInd=>Body) : Tree Body NodeData NodeId = 
-    inithead = 0@NodeId
+def buildTree (bodies:body=>Body) : Tree Body NodeData node =
+    inithead = 0@node
     initarr  = for i. Unused
     (_, tree) = yieldState (inithead, initarr) \ref.
         insertElement' = insertElement decide initNodeDataFn (fstRef ref) (sndRef ref)
@@ -388,8 +390,11 @@ def buildTree (bodies:BodyInd=>Body) : Tree Body NodeData NodeId =
         updateAllNodeData' (sndRef ref)
     tree
 
+-- Change me!
+NodeId = Fin 400 -- usually doubles number of bodies in the system
+
 %time
-tree = buildTree bodies
+tree : Tree Body NodeData NodeId = buildTree bodies
 -- :p tree
 
 ' #### Probing
@@ -403,7 +408,6 @@ probe tree (0.0) testPos1
 
 %time
 pairwiseProbe bodies testPos1
-
 
 ' Increasing $\theta$ allows for faster but less accutate result
 
