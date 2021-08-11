@@ -368,11 +368,12 @@ def pairwiseProbe (bodies:bodyid=>Body) (pos:Vec D) : Vec D =
 ' #### Synthetic data
 
 -- Change me!
-BodyInd = Fin 200
+BodyInd = Fin 20
 
 [k1,k2] = splitKey (newKey 0)
 initPos : BodyInd=>Vec D = for i j. rand $ ixkey2 k1 i j
-masses  : BodyInd=>Float = one *. 1.0e11
+initVel : BodyInd=>Vec D = for i j. rand $ ixkey2 k2 i j
+masses  : BodyInd=>Float = for i. 1.0e11 .* (rand $ ixkey k1 i)
 bodies  : BodyInd=>Body  = for i. { m=masses.i, pos=initPos.i, }
 
 -- :p initPos
@@ -391,7 +392,7 @@ def buildTree (bodies:body=>Body) : Tree Body NodeData node =
     tree
 
 -- Change me!
-NodeId = Fin 400 -- usually doubles number of bodies in the system
+NodeId = Fin 40 -- usually doubles number of bodies in the system
 
 %time
 tree : Tree Body NodeData NodeId = buildTree bodies
@@ -438,3 +439,111 @@ loss = mean for i.
     sum $ map abs diff
 
 :p loss
+
+' ### Simulation
+
+Position = (Fin D)=>Float
+Velocity = (Fin D)=>Float
+Force = (Fin D)=>Float
+Mass = Float
+
+data BodyState = 
+    MkBodyState Mass Position Velocity
+
+init_state : BodyInd=>BodyState = for i.
+    mass=masses.i
+    pos=initPos.i
+    vel=initVel.i
+    (MkBodyState mass pos vel)
+
+def state2body ((MkBodyState mass pos _):BodyState) : Body = 
+    {
+        m=mass,
+        pos=pos
+    }
+
+def body2state (b:Body) (vel:Velocity) : BodyState = 
+    m = getAt #m b
+    pos = getAt #pos b
+    (MkBodyState m pos vel)
+
+dt = 0.0001
+Times = Fin 70
+
+def update (bodystates:n=>BodyState) (dt:Float) : n=>BodyState =
+  -- Updates all the body states.
+  bodies = map state2body bodystates
+  tree : Tree Body NodeData (Fin 40) = buildTree bodies
+  theta = 1.0
+  for i.
+    -- Todo: don't compute forces with yourself when for ranges are fixed.
+    (MkBodyState mass pos vel) = bodystates.i
+    f = probe tree theta pos
+    -- Todo: use a better integrator.
+    vel' = vel + dt .* f  -- Euler integrator.
+    pos' = pos + dt .* vel  -- Euler integrator
+    (MkBodyState mass pos' vel')
+
+def step (_:Times) (bodies:n=>BodyState) : n=>BodyState = 
+  update bodies dt
+
+-- Versions of scan that explicity take the index set n.
+def scan'' (init:a) (n:Type) (body:n->a->(a&b)) : (a & n=>b) =
+  swap $ runState init \s. for i.
+    c = get s
+    (c', y) = body i c
+    s := c'
+    y
+
+def scan''' (init:a) (n:Type) (body:n->a->a) : n=>a =
+  snd $ scan'' init n \i x. dup (body i x)
+
+history = scan''' init_state Times step
+
+:t history
+
+coords = for t:Times i:BodyInd.
+  (MkBodyState _ p _) = history.t.i
+  [p.(0@_), p.(1@_), masses.i] -- x, y, mass
+
+def hue2rgb (p:Float) (q:Float) (t:Float) : Float = 
+  t = t - floor t
+  if t < (1.0/6.0)
+    then p + (q - p) * 6.0 * t
+    else if t < (1.0/2.0)
+      then q
+      else if t < (2.0/3.0)
+        then p + (q - p) * (2.0/3.0 - t) * 6.0
+        else p
+
+def hslToRgb (h:Float) (s:Float) (l:Float) : (Fin 3)=>Float =
+  if s == 0.0
+    then [l, l, l] -- achromatic
+    else
+      q = select (l < 0.5) (l * (1.0 + s)) (l + s - l * s)
+      p = 2.0 * l - q
+      r = hue2rgb p q (h + 1.0/3.0)
+      g = hue2rgb p q h
+      b = hue2rgb p q (h - 1.0/3.0)
+      [r, g, b]
+
+def pathImgs (coords:t=>n=>(Fin 3)=>Float) : t=>h=>w=>(Fin 3)=>Float = 
+    size_h = IToF $ size h
+    size_w = IToF $ size w
+    max_mass = maximum masses
+    yieldAccum (AddMonoid Float) \imgs.
+        for tt i.
+            [x,y,m] = coords.tt.i
+            hx' = FToI $ round $ clip (0.0,1.0) x * (size_h-1.)
+            wy' = FToI $ round $ clip (0.0,1.0) y * (size_w-1.)
+            hx = (hx'@_)
+            wy = (wy'@_)
+            c = m/max_mass
+            imgs!tt!hx!wy += zero + hslToRgb c 1.0 0.5
+        ()
+
+imgs : Times=>(Fin 200)=>(Fin 200)=>(Fin 3)=>Float = pathImgs coords
+
+import png
+
+:html imseqshow imgs
