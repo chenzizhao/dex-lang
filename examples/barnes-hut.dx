@@ -1,6 +1,6 @@
 
 ' ## Barnes-Hut algorithm for the N body problem
-https://jheer.github.io/barnes-hut/
+[https://jheer.github.io/barnes-hut/](https://jheer.github.io/barnes-hut/)
 
 ' ### Quadtree
 
@@ -147,14 +147,11 @@ def insertElement
                             extendLeaf2' leafid psid valsid val
                             False
 
--- todo this can be combined with insertElement in theory
--- pro: compute center of masses in one go
--- con: may complicate insertElement
 -- API
 def updateAllNodeData
     (updateBranchData:(Ref h (Tree a b node))->(Node a b node)->{State h}(Node a b node))
-    -- domain specific
-    (arrref:Ref h (Tree a b node)) : {State h} Unit =
+    (arrref:Ref h (Tree a b node))
+    : {State h} Unit =
     rof i.
         node = get arrref!i
         if isBranch node then
@@ -164,6 +161,7 @@ def updateAllNodeData
 
 ' ### Domain specific setups
 
+-- Tune me!
 NodeId = Fin 400
 BodyInd = Fin 200
 def Vec (d:Int) : Type = (Fin d)=>Float
@@ -173,8 +171,6 @@ Body = {
     ind:BodyInd
   & m:Float
   & pos:Vec D
---   & vel:Vec D
---   & nodeId:NodeId
 }
 
 NodeData = {
@@ -206,9 +202,6 @@ def subBox ((low, high):BBox) (pos:Vec D) : BBox =
     newlow = for d. low.d + half * (floor ((pos.d-low.d)/half))
     newhigh = for d. newlow.d + half
     (newlow, newhigh)
-
-subBox ([0.5, 0.5], [1.0,1.0]) [0.51, 0.76]
-subQuad ([0.5, 0.5], [1.0,1.0]) [0.51, 0.76]
 
 ' #### Two functions needed in insertElement
 
@@ -280,9 +273,11 @@ def updateBranchData
 
 ' #### Estimate N-body forces
 
--- gravity = 6.674286e-11  -- units?
-gravity = 6.67
+' ##### Calculate forces
 
+gravity = 6.674286e-11  -- units?
+
+-- more like a = F/m = Gm'/d2
 def force (otherpos:Vec D) (othermass:Float) (pos:Vec D) : Vec D = 
     case otherpos == pos of
         True -> zero
@@ -304,6 +299,8 @@ def widthDistanceRatio (n:Node Body NodeData NodeId) (pos:Vec D) : Float =
     distance = sqrt $ vdot diff diff
     width/distance
 
+' ##### Stack utilities
+
 def Stack (slot:Type) (a:Type) : Type = ((slot=>a)&slot)
 
 def push (stackRef:Ref h (Stack slot a)) (x:a) : {State h} Unit =
@@ -323,11 +320,14 @@ def pop (stackRef:Ref h(Stack slot a)) (_:Unit) : {State h} a =
     headRef := prevHead
     x
 
-N = 50 -- ~ depth * 8 ~ log8 (N) * 8
+' ##### Probe by traversing the tree
 
-def initStack : Stack (Fin N) NodeId =
+-- Tune me!
+N_stack = 50 -- ~ depth * 8 ~ log8 (N) * 8
+
+def initStack : Stack (Fin N_stack) NodeId =
     arr = for _. (0@NodeId)
-    (arr, 1@(Fin N))
+    (arr, 1@_)
 
 -- API
 def probe (arr:Tree Body NodeData NodeId) (theta:Float) (pos:Vec D) : Vec D = 
@@ -355,6 +355,7 @@ def probe (arr:Tree Body NodeData NodeId) (theta:Float) (pos:Vec D) : Vec D =
                                 ()
                 ((ordinal (get headRef)) > 0)
 
+-- API: Benchmark
 def pairwiseProbe (bodies:BodyInd=>Body) (pos:Vec D) : Vec D= 
     yieldAccum (AddMonoid Float) \forceRef.
         for i. 
@@ -369,7 +370,7 @@ def pairwiseProbe (bodies:BodyInd=>Body) (pos:Vec D) : Vec D=
 
 [k1,k2] = splitKey (newKey 0)
 initPos : BodyInd=>Vec D = for i j. rand $ ixkey2 k1 i j
-masses  : BodyInd=>Float = one
+masses  : BodyInd=>Float = one *. 1.0e11
 bodies  : BodyInd=>Body  = for i. { ind=i, m=masses.i, pos=initPos.i, }
 
 -- :p initPos
