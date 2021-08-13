@@ -199,6 +199,9 @@ def subBox ((low, high):BBox) (pos:Vec D) : BBox =
     newhigh = for d. newlow.d + half
     (newlow, newhigh)
 
+def inRootBox (pos:Vec D) : Bool =
+    all for d. pos.d > 0. && pos.d < 1.
+
 ' #### Two functions needed in insertElement
 
 -- API
@@ -312,18 +315,13 @@ def pop (stackRef:Ref h(Stack slot a)) (_:Unit) : {State h} a =
     currHead = get headRef
     prevHead = currHead -! 1
     x = get arrRef!prevHead
-    -- arrRef!prevHead := default
     headRef := prevHead
     x
 
 ' ##### Probe by traversing the tree
 
--- Tune me!
-N_stack = 5 -- ~ depth * 8 ~ log8 (N) * 8
-
--- def initStack : Stack (Fin N_stack) NodeId =
---     arr = for _. (0@NodeId)
---     (arr, 1@_)
+-- Change me!
+N_stack = 50 -- ~ depth * 8 ~ log8 (N) * 8
 
 -- API
 def probe (arr:Tree body NodeData node) (theta:Float) (pos:Vec D) : Vec D =
@@ -368,20 +366,15 @@ def pairwiseProbe (bodies:bodyid=>Body) (pos:Vec D) : Vec D =
 ' #### Synthetic data
 
 -- Change me!
-BodyInd = Fin 2
+BodyInd = Fin 1000
 
 [k1,k2] = splitKey (newKey 0)
--- initPos : BodyInd=>Vec D = for i j. rand $ ixkey2 k1 i j
--- initVel : BodyInd=>Vec D = for i j. rand $ ixkey2 k2 i j
--- masses  : BodyInd=>Float = for i. 1.0e11 .* (rand $ ixkey k1 i)
-initPos : BodyInd=>Vec D = [[0.25, 0.5], [0.75, 0.5]]
-initVel : BodyInd=>Vec D = [[0., 2.], [0., -1.]]
-masses  : BodyInd=>Float = [1.0e11, 3.0e11]
-
-bodies  : BodyInd=>Body  = for i. { m=masses.i, pos=initPos.i, }
-
--- :p initPos
--- :p bodies
+initPos : BodyInd=>Vec D = for i j. rand $ ixkey2 k1 i j
+initVel : BodyInd=>Vec D = zero
+masses  : BodyInd=>Float = for i. 1.0e11 .* (rand $ ixkey k1 i)
+-- initPos : BodyInd=>Vec D = [[0.25, 0.5], [0.75, 0.5]]
+-- initVel : BodyInd=>Vec D = [[0., 2.], [0., -1.]]
+-- masses  : BodyInd=>Float = [1.0e11, 3.0e11]
 
 ' #### Insert all elements
 
@@ -390,59 +383,12 @@ def buildTree (bodies:body=>Body) : Tree Body NodeData node =
     initarr  = for i. Unused
     (_, tree) = yieldState (inithead, initarr) \ref.
         insertElement' = insertElement decide initNodeDataFn (fstRef ref) (sndRef ref)
-        for i. insertElement' bodies.i
+        for i.
+            if inRootBox (getAt #pos bodies.i)
+                then insertElement' bodies.i
         updateAllNodeData' = updateAllNodeData updateBranchData
         updateAllNodeData' (sndRef ref)
     tree
-
--- Change me!
--- NodeId = Fin 10 -- usually doubles number of bodies in the system
--- 
--- %time
--- tree : Tree Body NodeData NodeId = buildTree bodies
--- -- :p tree
--- 
--- ' #### Probing
--- 
--- ' $\theta = 0.0$ makes sure that all leaves are reached
--- 
--- testPos1 = [1.0, 1.0]
--- 
--- %time
--- probe tree (0.0) testPos1
--- 
--- %time
--- pairwiseProbe bodies testPos1
--- 
--- ' Increasing $\theta$ allows for faster but less accutate result
--- 
--- testPos2 = [10., 10.]
--- 
--- %time
--- probe tree (0.0) testPos2
--- 
--- %time
--- probe tree (0.2) testPos2
--- 
--- %time
--- probe tree (5.0) testPos2
--- 
--- ' Is BH faster than bruteforce? 
--- Yes, only when body number > 200 with $\theta$=1.0
--- 
--- %time
--- forces1 =
---     probe' = probe tree (1.0)
---     for i. probe' initPos.i
--- 
--- %time
--- forces2 = for i. pairwiseProbe bodies initPos.i
--- 
--- loss = mean for i.
---     diff = forces1.i - forces2.i
---     sum $ map abs diff
--- 
--- :p loss
 
 ' ### Simulation
 
@@ -452,44 +398,45 @@ Force = (Fin D)=>Float
 Mass = Float
 
 data BodyState = 
-    MkBodyState Mass Position Velocity
+    MkBodyState Mass Position Velocity Bool
 
 init_state : BodyInd=>BodyState = for i.
     mass=masses.i
     pos=initPos.i
     vel=initVel.i
-    (MkBodyState mass pos vel)
+    escaped=not $ inRootBox pos
+    (MkBodyState mass pos vel escaped)
 
-def state2body ((MkBodyState mass pos _):BodyState) : Body = 
+def state2body ((MkBodyState mass pos _ _):BodyState) : Body =
     {
         m=mass,
         pos=pos
     }
 
-def body2state (b:Body) (vel:Velocity) : BodyState = 
-    m = getAt #m b
-    pos = getAt #pos b
-    (MkBodyState m pos vel)
-
 -- Change me!
-dt = 0.001
-Times = Fin 100
+dt = 0.00005
+Times = Fin 500
 
 def update (bodystates:n=>BodyState) (dt:Float) : n=>BodyState =
   -- Updates all the body states.
   bodies = map state2body bodystates
 --   Change me!
-  tree : Tree Body NodeData (Fin 10) = buildTree bodies
+  tree : Tree Body NodeData (Fin 2000) = buildTree bodies
   theta = 1.0
 
   for i.
     -- Todo: don't compute forces with yourself when for ranges are fixed.
-    (MkBodyState mass pos vel) = bodystates.i
-    f = probe tree theta pos
-    -- Todo: use a better integrator.
-    vel' = vel + dt .* f  -- Euler integrator.
-    pos' = pos + dt .* vel  -- Euler integrator
-    (MkBodyState mass pos' vel')
+    (MkBodyState mass pos vel escaped) = bodystates.i
+    if escaped
+        then (MkBodyState mass pos zero True)
+        else
+            f = probe tree theta pos
+            -- Todo: use a better integrator.
+            vel' = vel + dt .* f  -- Euler integrator.
+            pos' = pos + dt .* vel  -- Euler integrator
+            if inRootBox pos'
+                then (MkBodyState mass pos' vel' False)
+                else (MkBodyState mass pos' zero True)
 
 def step (_:Times) (bodies:n=>BodyState) : n=>BodyState = 
   update bodies dt
@@ -510,29 +457,7 @@ history = scan''' init_state Times step
 
 :t history
 
-' #### Static plot
-
-import plot
-
--- unroll coordinates for plotting.
-coords' = for (t, i):(Times & BodyInd).
-  (MkBodyState _ p _) = history.t.i
-  (p.(0@_), p.(1@_))
-
-:t coords'
--- Print last coordinates
-:p coords'.(((size Times) - 1)@_)
-
--- Plot coordinates
-(xs, ys) = unzip coords'
-:html showPlot $ xyPlot xs ys
-
-
 ' #### Gif
-
-coords = for t:Times i:BodyInd.
-  (MkBodyState _ p _) = history.t.i
-  [p.(0@_), p.(1@_), masses.i] -- x, y, mass
 
 def hue2rgb (p:Float) (q:Float) (t:Float) : Float = 
   t = t - floor t
@@ -555,24 +480,43 @@ def hslToRgb (h:Float) (s:Float) (l:Float) : (Fin 3)=>Float =
       b = hue2rgb p q (h - 1.0/3.0)
       [r, g, b]
 
-def pathImgs (coords:t=>n=>(Fin 3)=>Float) : t=>h=>w=>(Fin 3)=>Float = 
+def pathImgs (hist:t=>n=>BodyState) : t=>h=>w=>(Fin 3)=>Float =
     size_h = IToF $ size h
     size_w = IToF $ size w
     max_mass = maximum masses
     yieldAccum (AddMonoid Float) \imgs.
         for tt i.
-            [x,y,m] = coords.tt.i
-            wx' = FToI $ round $ clip (0.0,1.0) x * (size_h-1.)
-            hy' = FToI $ round $ clip (0.0,1.0) y * (size_w-1.)
-            wx = (wx'@_)
-            hy = (hy'@_)
-            c = m/max_mass
-            imgs!tt!hy!wx += zero + hslToRgb c 1.0 0.5
+            (MkBodyState m p _ escaped) = hist.tt.i
+            if not escaped then
+                [x, y] = p
+                wx' = FToI $ round $ clip (0.0,1.0) x * (size_h-1.)
+                hy' = FToI $ round $ clip (0.0,1.0) y * (size_w-1.)
+                wx = (wx'@_)
+                hy = (hy'@_)
+                c = m/max_mass
+                imgs!tt!hy!wx += zero + hslToRgb c 1.0 0.5
         ()
 
 -- Change me! resolution
-imgs : Times=>(Fin 150)=>(Fin 150)=>(Fin 3)=>Float = pathImgs coords
+imgs : Times=>(Fin 400)=>(Fin 400)=>(Fin 3)=>Float = pathImgs history
 
 import png
 
-:html imgToHtml $ pngsToGif 5 $ map imgToPng imgs
+-- :html imgToHtml $ pngsToGif 5 $ map imgToPng imgs
+
+def pngsToSavedGif (delay:Int) (pngs:t=>Png) (outFileName:String) : Gif =
+  unsafeIO \().
+    withTempFiles \pngFiles.
+      for i.
+        writeFile pngFiles.i pngs.i
+      shellOut $
+        "convert" <> " -delay " <> show delay <> " " <>
+        concat (for i. "png:" <> pngFiles.i <> " ") <>
+        "gif:" <> outFileName <> ".gif"
+
+%time
+pngs = map imgToPng imgs
+
+
+%time
+pngsToSavedGif 5 pngs "100"
