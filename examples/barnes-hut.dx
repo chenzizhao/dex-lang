@@ -369,12 +369,11 @@ def pairwiseProbe (bodies:bodyid=>Body) (pos:Vec D) : Vec D =
 BodyInd = Fin 1000
 
 [k1,k2] = splitKey (newKey 0)
-initPos : BodyInd=>Vec D = for i j. rand $ ixkey2 k1 i j
-initVel : BodyInd=>Vec D = zero
-masses  : BodyInd=>Float = for i. 1.0e11 .* (rand $ ixkey k1 i)
--- initPos : BodyInd=>Vec D = [[0.25, 0.5], [0.75, 0.5]]
--- initVel : BodyInd=>Vec D = [[0., 2.], [0., -1.]]
--- masses  : BodyInd=>Float = [1.0e11, 3.0e11]
+initPos : BodyInd=>Vec D = for i j. (randn (ixkey2 k1 i j))/6.0 + 0.5
+initVel : BodyInd=>Vec D = for i.
+    [x, y] = initPos.i
+    [-(y-0.5), (x-0.5)] *. 5.0e2
+masses  : BodyInd=>Float = for i. 1.0e9 .* (rand $ ixkey k1 i)
 
 ' #### Insert all elements
 
@@ -415,7 +414,7 @@ def state2body ((MkBodyState mass pos _ _):BodyState) : Body =
 
 -- Change me!
 dt = 0.00005
-Times = Fin 500
+Times = Fin 100
 
 def update (bodystates:n=>BodyState) (dt:Float) : n=>BodyState =
   -- Updates all the body states.
