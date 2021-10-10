@@ -9,7 +9,8 @@
 
 module LabeledItems
   ( Label, LabeledItems (..), labeledSingleton, reflectLabels, getLabels
-  , withLabels, lookupLabelHead, ExtLabeledItems (..), prefixExtLabeledItems
+  , withLabels, lookupLabelHead, lookupLabel, ExtLabeledItems (..), prefixExtLabeledItems
+  , unzipExtLabeledItems
   , pattern NoLabeledItems, pattern NoExt, pattern InternalSingletonLabel
   , pattern Unlabeled ) where
 
@@ -30,7 +31,7 @@ type Label = String
 -- record objects; the order in the concrete syntax of items with different
 -- fields is discarded (so both `{b:Z & a:X & a:Y}` and `{a:X & b:Z & a:Y}` map
 -- to `M.fromList [("a", NE.fromList [X, Y]), ("b", NE.fromList [Z])]` )
-newtype LabeledItems a = LabeledItems (M.Map Label (NE.NonEmpty a))
+newtype LabeledItems a = LabeledItems { fromLabeledItems :: M.Map Label (NE.NonEmpty a) }
   deriving (Eq, Show, Generic, Functor, Foldable, Traversable)
 
 labeledSingleton :: Label -> a -> LabeledItems a
@@ -52,6 +53,11 @@ lookupLabelHead (LabeledItems items) l = case M.lookup l items of
   Nothing -> Nothing
   Just (x NE.:| _) -> Just x
 
+lookupLabel :: LabeledItems a -> Label -> [a]
+lookupLabel (LabeledItems items) l = case M.lookup l items of
+  Just (x NE.:| xs) -> x : xs
+  Nothing -> []
+
 instance Semigroup (LabeledItems a) where
   LabeledItems items <> LabeledItems items' =
     LabeledItems $ M.unionWith (<>) items items'
@@ -70,6 +76,14 @@ data ExtLabeledItems a b = Ext (LabeledItems a) (Maybe b)
 -- Adds more items to the front of an ExtLabeledItems.
 prefixExtLabeledItems :: LabeledItems a -> ExtLabeledItems a b -> ExtLabeledItems a b
 prefixExtLabeledItems items (Ext items' rest) = Ext (items <> items') rest
+
+-- The returned list is parallel to the input LabeledItems, following
+-- the sort order of the labels.
+unzipExtLabeledItems :: ExtLabeledItems a b -> (ExtLabeledItems () (), [a], Maybe b)
+unzipExtLabeledItems (Ext items (Just b)) =
+  (Ext ((const ()) <$> items) (Just ()), (toList items), Just b)
+unzipExtLabeledItems (Ext items Nothing) =
+  (Ext ((const ()) <$> items) Nothing, (toList items), Nothing)
 
 pattern NoLabeledItems :: LabeledItems a
 pattern NoLabeledItems <- ((\(LabeledItems items) -> M.null items) -> True)
