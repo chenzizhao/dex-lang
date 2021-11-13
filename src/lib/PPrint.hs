@@ -571,7 +571,7 @@ instance Pretty BinderInfo where
   pretty b = case b of
     LamBound _    -> "<lambda binder>"
     LetBound _ e  -> p e
-    PiBound       -> "<pi binder>"
+    PiBound  _    -> "<pi binder>"
     UnknownBinder -> "<unknown binder>"
     PatBound      -> "<pattern binder>"
 
@@ -589,6 +589,10 @@ instance Pretty AnyBinderInfo where
     LocalUExprBound      -> "UExpr name"
     ImpBound             -> "Imp name"
     TrulyUnknownBinder   -> "<unknown binder (really)>"
+
+instance Pretty a => Pretty (SubstVal a) where
+  pretty (SubstVal x) = "subst with" <+> p x
+  pretty (Rename   n) = "rename to" <+> p n
 
 instance Pretty DataDef where
   pretty (DataDef name bs cons) =
@@ -777,7 +781,7 @@ instance Pretty ImpBlock where
                        [] -> ""
                        _  -> hardline <> "return" <+> p results
 
-printLitBlock :: Bool -> SourceBlock -> Result -> String
+printLitBlock :: Pretty block => Bool -> block -> Result -> String
 printLitBlock isatty block (Result outs result) =
   pprint block ++ concat (map (printOutput isatty) outs) ++ printResult isatty result
 

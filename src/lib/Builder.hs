@@ -10,11 +10,11 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Builder (emit, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildPi,
+module Builder (emit, emitAnn, emitOp, emitBinding, buildDepEffLam, buildLamAux, buildPi,
                 getAllowedEffects, withEffects, modifyAllowedEffects,
-                buildLam, BuilderT, Builder, MonadBuilder, buildScoped, runBuilderT,
-                runSubstBuilder, runBuilder, getScope, getSynthCandidates,
-                builderLook, liftBuilder,
+                buildLam, BuilderT, Builder, MonadBuilder (..), buildScoped, runBuilderT,
+                runSubstBuilder, runBuilder, runBuilderT', getScope, getSynthCandidates,
+                liftBuilder,
                 app,
                 add, mul, sub, neg, div',
                 iadd, imul, isub, idiv, ilt, ieq,
@@ -24,8 +24,8 @@ module Builder (emit, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildPi,
                 naryApp, appReduce, appTryReduce, buildAbs, buildAAbs, buildAAbsAux,
                 buildFor, buildForAux, buildForAnn, buildForAnnAux,
                 emitBlock, unzipTab, isSingletonType, withNameHint,
-                singletonTypeVal, scopedDecls, builderScoped, extendScope, checkBuilder,
-                builderExtend, unpackLeftLeaningConsList, unpackRightLeaningConsList,
+                singletonTypeVal, scopedDecls, extendScope, checkBuilder,
+                unpackLeftLeaningConsList, unpackRightLeaningConsList,
                 unpackBundle, unpackBundleTab,
                 emitRunWriter, emitRunWriters, mextendForRef, monoidLift,
                 emitRunState, emitMaybeCase, emitWhile, emitDecl,
@@ -39,7 +39,7 @@ module Builder (emit, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildPi,
                 clampPositive, buildNAbs, buildNAbsAux, buildNestedLam,
                 transformModuleAsBlock, dropSub, appReduceTraversalDef,
                 indexSetSizeE, indexToIntE, intToIndexE, freshVarE,
-                catMaybesE, runMaybeWhile) where
+                catMaybesE, runMaybeWhile, makeClassDataDef) where
 
 import Control.Applicative
 import Control.Monad
@@ -142,18 +142,21 @@ freshNestedBindersRec substEnv (Nest b bs) = do
   return $ Nest v vs
 
 buildPi :: (Fallible m, MonadBuilder m)
-        => Binder -> (Atom -> m (Arrow, Type)) -> m Atom
-buildPi b f = do
+        => Binder -> (Atom -> m Arrow) -> (Atom -> m Type) -> m Atom
+buildPi b fArr fTy = do
   scope <- getScope
   (ans, decls) <- scopedDecls $ do
-     v <- withNameHint b $ freshVarE PiBound $ binderType b
-     (arr, ans) <- f $ Var v
+     v <- withNameHint b $ freshVarE UnknownBinder $ binderType b
+     arr <- fArr $ Var v
+     -- overwriting the previous binder info know that we know more
+     extendScope $ v @> AtomBinderInfo (varType v) (PiBound (void arr))
+     ans <- fTy $ Var v
      return $ Pi $ makeAbs (Bind v) (arr, ans)
   let block = wrapDecls decls ans
   case typeReduceBlock scope block of
-    Just piTy -> return piTy
-    Nothing -> throw CompilerErr $
-      "Unexpected irreducible decls in pi type: " ++ pprint decls
+    Right piTy -> return piTy
+    Left _ -> throw CompilerErr $
+      "Unexpected irreducible decls in pi type: " ++ pprint block
 
 buildAbsAux :: (MonadBuilder m, HasVars a) => Binder -> (Atom -> m (a, b)) -> m (Abs Binder (Nest Decl, a), b)
 buildAbsAux b f = do
@@ -685,6 +688,21 @@ instance MonadReader r m => MonadReader r (BuilderT m) where
     builderExtend envC'
     return ans
 
+instance MonadWriter w m => MonadWriter w (BuilderT m) where
+  tell = lift . tell
+  listen m = do
+    envC <- builderLook
+    envR <- builderAsk
+    ((ans, envC'), w) <- lift $ listen $ runBuilderT' m (envR, envC)
+    builderExtend envC'
+    return (ans, w)
+  pass m = do
+    envC <- builderLook
+    envR <- builderAsk
+    (ans, envC') <- lift $ pass $ (\((a, wf), e) -> ((a, e), wf)) <$> runBuilderT' m (envR, envC)
+    builderExtend envC'
+    return ans
+
 instance MonadState s m => MonadState s (BuilderT m) where
   get = lift get
   put = lift . put
@@ -717,6 +735,7 @@ extendScope scope = builderExtend $ asFst (scope, scs)
 binderInfoAsSynthCandidates :: Name -> AnyBinderInfo -> SynthCandidates
 binderInfoAsSynthCandidates name binfo = case binfo of
   AtomBinderInfo ty (LamBound ClassArrow)    -> mempty { lambdaDicts       = [Var (name:>ty)]}
+  AtomBinderInfo ty (PiBound  ClassArrow)    -> mempty { lambdaDicts       = [Var (name:>ty)]}
   SuperclassName _ _ superclassGetter        -> mempty { superclassGetters = [superclassGetter]}
   AtomBinderInfo ty (LetBound InstanceLet _) -> mempty { instanceDicts     = [Var (name:>ty)]}
   _ -> mempty
@@ -1114,3 +1133,8 @@ runMaybeWhile lam = do
   emitIf hadError
     (return $ NothingAtom UnitTy)
     (return $ JustAtom    UnitTy UnitVal)
+
+makeClassDataDef :: SourceName -> Nest Binder -> [Type] -> [Type] -> DataDef
+makeClassDataDef className params superclasses methods =
+  DataDef className params [DataConDef ("Mk"<>className) (Nest (Ignore dictContents) Empty)]
+  where dictContents = PairTy (ProdTy superclasses) (ProdTy methods)

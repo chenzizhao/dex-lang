@@ -13,7 +13,7 @@ maintainer:          dougalm@google.com
 license-file:        LICENSE
 build-type:          Simple
 
-data-files:          lib/*.dx
+data-files:          lib/*.dx, static/*.html, static/*.js, static/*.css
 extra-source-files:  lib/*.dx,
                      src/lib/dexrt.bc,
                      static/index.js, static/style.css
@@ -59,11 +59,12 @@ library
                        Autodiff, Interpreter, Logging, CUDA,
                        LLVM.JIT, LLVM.Shims, JIT, LLVMExec, Export
                        Err, LabeledItems, SourceRename,
-                       SaferNames.NameCore, SaferNames.Name, SaferNames.LazyMap,
+                       SaferNames.Name, SaferNames.LazyMap,
                        SaferNames.Syntax, SaferNames.Bridge,
                        SaferNames.PPrint, SaferNames.Parser,
                        SaferNames.ResolveImplicitNames, SaferNames.SourceRename,
-                       SaferNames.Type, SaferNames.Builder, SaferNames.Inference
+                       SaferNames.Type, SaferNames.Builder, SaferNames.Inference,
+                       SaferNames.CheapReduction
   if flag(live)
     exposed-modules:   Actor, RenderHtml, LiveOutput
   other-modules:       Paths_dex
@@ -132,6 +133,8 @@ executable dex
   hs-source-dirs:      src
   default-extensions:  CPP, LambdaCase, BlockArguments
   ghc-options:         -threaded -optP-Wno-nonportable-include-path
+  if flag(cuda)
+    cpp-options:       -DDEX_CUDA
   if flag(live)
     cpp-options:       -DDEX_LIVE
   if flag(optimized)
