@@ -9,7 +9,7 @@ instance Recur ele acc ele
 -- base case: when there is no subproblem, i.e. a==c==ele
     recur = \ele' acc' accumulate. accumulate ele' acc'
 
-instance [Recur ele acc sub] Recur ele acc (ele&sub)
+instance [Recur ele acc subproblem] Recur ele acc (ele&subproblem)
 -- recursive case: there is a subproblem to solve
     recur = \(ele', sub') acc' accumulate.
         newacc' = accumulate ele' acc'
