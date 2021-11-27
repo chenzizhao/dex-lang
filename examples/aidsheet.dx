@@ -1,0 +1,137 @@
+'# Dex Aid Sheet
+This catelogues common and less known language features. It also provide references to examples. \
+If you haven't work through `examples/tutorial.dx`, check that out first! \
+In gerneral the following files are good reference: \
+⇨ `prelude.dx`\
+⇨ `tests/type-tests.dx`\
+⇨ `tests/eval-tests.dx`\
+⇨ [https://github.com/google-research/dex-lang/issues](https://github.com/google-research/dex-lang/issues)
+
+'## Array, matrix, tensor
+
+'### for-constructor
+
+two_d_matrix = for i:(Fin 3). for j:(Fin 4). 0.0
+two_d_matrix2 : (Fin 3)=>(Fin 4)=>Float = for i j. 0.0
+two_d_matrix3 : (Fin 3)=>(Fin 4)=>Float = for i. for j. 0.0
+two_d_matrix4 : (Fin 3)=>(Fin 4)=>Float = zero
+
+'### Index
+
+one_d_ord : (Fin 3)=>Int = for i. ordinal i
+:p one_d_ord
+
+one_d_ord2 = for i:(Fin 3). (0@(Fin 3))
+:p one_d_ord2
+
+triangular_matrix : i:(Fin 3)=>(..i)=>Int = zero
+:p triangular_matrix
+
+' ⇨ `lib/linalg.dx`\
+⇨ `examples\ode-integrator.dx`\
+⇨ `examples\psd.dx`
+
+
+'## Control flow
+### if else
+### case of
+
+'## Stateful updates
+### while
+### iter
+### boundediter
+### runstate, yieldstate
+### index ref
+### stateful functions
+
+
+'## Named record
+
+
+'## Dependent type
+
+
+'## Abstract data type
+
+
+
+'⇨ `prelude.dx`\
+⇨ `examples/nn.dx`\
+⇨ `examples/raytrace.dx`\
+⇨ `examples/quaternions.dx`
+
+'## Function
+
+'### lambda
+
+'### curring
+
+
+'## Typeclass / Interface
+
+interface [Add b] HetAdd a b
+    hetadd : a -> b -> b
+
+instance HetAdd Int Float
+    hetadd = \integer float. float + (IToF) integer
+
+def myhetadd [HetAdd a b] (m:a) (n:b) : b =
+    hetadd m $ hetadd m n
+
+def myhetadd2 [HetAdd a b, HetAdd b a] (m:a) (n:b) : (a&b) =
+    (hetadd n m, hetadd m n)
+
+'⇨ `prelude.dx`\
+⇨ `examples/manifold-gradient.dx`\
+⇨ `examples/nn.dx`
+
+
+'## Unpack
+
+'## Polymorphism
+
+
+' ## Plot
+
+-- import diagram
+import plot
+
+xs = for i:(Fin 30). IToF $ ordinal i
+ys = for i:(Fin 30). xs.i
+
+:html showPlot $ xyPlot xs ys
+> <html output>
+
+'⇨ `examples/brownian_motion.dx`\
+⇨ `examples/mandelbrot.dx`
+
+'## Debug
+
+def later (m:a) : Float = todo
+
+an_unknown_float : Float = later "?"
+
+
+unexpected : Int = error ("custom message")
+
+an_integer = 1
+
+'### print value
+
+:p an_integer
+
+'### print type
+
+:t an_integer
+
+'### benchmark compile and run time
+
+%time
+an_integer+an_integer
+
+%bench "sum"
+
+'### show compiler passes
+
+%passes
+an_integer*an_integer
