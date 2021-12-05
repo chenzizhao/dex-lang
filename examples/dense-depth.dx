@@ -1,0 +1,97 @@
+import plot
+
+'## Dense depth map from stereo images
+
+def Image (h:Int) (w:Int) (c:Int): Type = 
+  (Fin h) => (Fin w) => (Fin c) => Float
+
+def Pos (h:Int) (w:Int) : Type =
+  ((Fin h) & (Fin w))
+
+def Bbox (h:Int) (w:Int) : Type =
+  ((Pos h w) & (Pos h w))
+
+def Param (h:Int) (w:Int) : Type = {
+  window_size:(Int & Int) &
+  max_disparity:Int &
+  bbox:Bbox h w &
+}
+
+def in_bbox (box:Bbox h w) (pos:Pos h w) : Bool = 
+  ((hl, wl), (hh, wh)) = box
+  (h', w') = pos
+  w' >= wl && w' <= wh && h' >= hl && h' <= hh
+
+def (+!) (a:(Fin n)) (b:Int) : (Fin n) = 
+  fromOrdinal (Fin n) $ ordinal a + b
+
+def (-!) (a:(Fin n)) (b:Int) : (Fin n) = 
+  fromOrdinal (Fin n) $ ordinal a - b
+
+def window (im:Image h w c) (pos:Pos h w) ((wdh, wdw):(Int&Int))
+  : Image wdh wdw c = 
+  (hc, wc) = pos
+  wl = wc -! (intdiv2 wdw)
+  hl = hc -! (intdiv2 wdh)
+  for i j. im.(hl +! (ordinal i)).(wl +! (ordinal j))
+
+def sum_abs_diff (patch1:Image h w c) (patch2: Image h w c)
+  : Float =
+  sum for (i,j,k). abs $ patch1.i.j.k - patch2.i.j.k
+
+def dense_disparity_map
+  (iml:Image h w c) (imr:Image h w c) (param: Param h w)
+  : (Fin h)=>(Fin w)=>Float = 
+  bbox = getAt #bbox param
+  max_disp = getAt #max_disparity param
+  (wdh, wdw) = getAt #window_size param
+  dissimilarity_metric = sum_abs_diff
+
+  for h' w'.
+    if not $ in_bbox bbox (h', w')
+      then zero
+      else 
+        patchl = window iml (h', w') (wdh, wdw)
+        dissimilarity = for d:(Fin max_disp). 
+          -- shift the right patch to the left by d
+          w'' = w' -! (ordinal d)
+          patchr = window imr (h', w'') (wdh, wdw)
+          dissimilarity_metric patchl patchr
+        IToF $ ordinal $ argmin dissimilarity
+
+
+'### Example
+
+H = 375
+W = 450
+C = 3
+Full = Fin (H * W * C)
+
+def pixel (x:Char) : Float32 =
+  r = W8ToI x
+  IToF case r < 0 of
+    True -> r + 256
+    False -> r
+
+def getIm (path:FilePath): Fin H => Fin W => Fin C => Float = 
+  (AsList _ im) = unsafeIO do readFile path
+  raw = unsafeCastTable Full im
+  for i:(Fin H) j:(Fin W) c:(Fin C).
+    pixel raw.((ordinal (i, j, c)) @ Full)
+
+im_l = getIm "02.bin"
+im_r = getIm "06.bin"
+
+:html imshow (im_l/255.0)
+:html imshow (im_r/255.0)
+
+param: Param H W = {
+  bbox = ((13@_, (70)@_), ((H-13)@_, (W-70)@_)),
+  max_disparity = 55,
+  window_size = (13, 13),
+}
+
+%time
+disp_map = dense_disparity_map im_l im_r param
+
+:html matshow disp_map
