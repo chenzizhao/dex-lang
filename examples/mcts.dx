@@ -1,0 +1,63 @@
+' ### Monte Carlo Tree Search
+
+def (+!) (n:a) (m:Int) : a = ((ordinal n) + m)@_
+def (-!) (x:n) (z:Int) : n = ((ordinal x) - z)@n
+def replaceInTable (new:a) (ind:n) (arr:n=>a) : (n=>a) = 
+  yieldState arr \ref. ref!ind := new
+
+
+data Node nodeIx a =
+  Branch content:a parent:(Maybe nodeIx) children:(List (nodeIx))
+
+def Tree (nodeIx:Type) (a:Type) : Type =
+  (nodeIx=>(Maybe (Node nodeIx a)) & nodeIx)  -- Node array, and pointer to last used node.
+
+def root (tree:Tree nodeIx a) : nodeIx =
+  0@_ -- Convention
+
+def isLeaf ((Branch _ _ children):Node node a) : Bool = 
+  listLength children == 0
+
+def isRoot ((Branch _ parent _):Node node a) : Bool = 
+  isNothing parent
+
+def initTree (maxSize:Int) (default_content:a) : Tree (Fin maxSize) a =
+  root = Branch default_content Nothing (AsList 0 [])
+  nothings = for i. Nothing
+  initArray = nothings |> replaceInTable (Just root) (0@_)
+  (initArray, 0@_)
+
+def Game (state:Type) (move:Type) : Type =
+  {
+    possibleMoves : state -> (List move) &
+    winOrLose : state -> Bool &
+    update : state -> move -> state &
+    gameOver : state -> Bool &
+  }
+
+NodeStats = (Int & Int)
+
+def mcts_select (game: Game state move)
+                (tree: Tree nodeIx NodeStats)
+                (key: Key) : nodeIx = 
+    todo
+
+def expand (game: Game state move)
+           (treeRef: Ref h (Tree nodeIx NodeStats))
+           (key: Key) (node: nodeIx) : {State h} Unit =
+    todo
+
+def rollout (game: Game state move)
+           (key: Key) (curState: state) : Bool =
+    todo
+
+def backpropagate (game: Game state move)
+           (treeRef: Ref h (Tree nodeIx NodeStats))
+           (node: nodeIx) (newResult: Bool) : {State h} Unit =
+    todo
+
+
+
+-- Tests
+
+initTree 10 (0, 0)
