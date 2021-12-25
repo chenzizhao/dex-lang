@@ -52,32 +52,45 @@ def mcts_select (game: Game state move) (currRoot: nodeIx)
         else 
           (Branch _ _ children_list) = curr_node
           (AsList _ children) = children_list
+          -- todo: UCT formula
           ref := children.(randIdx (hash key i))
           Continue
 
 
 def expand (game: Game state move)
            (treeRef: Ref h (Tree nodeIx (NodeStats state)))
-           (key: Key) (node: nodeIx) : {State h} Unit =
-    -- assume `node` has a non-terminal state
+           (key: Key) (node: nodeIx) : {State h} state =
+    -- assume `node` is a leaf node (base) and has a non-terminal state (base_state)
     
-    -- extact relevant info from the tree
-    curr_node = fromJust $ get (fstRef treeRef)!node
-    (Branch curr_stats curr_parent curr_children) = curr_node
-    (curr_win, curr_loss, curr_level, curr_state) = curr_stats
+    -- extract info about the base node
+    base_node = fromJust $ get (fstRef treeRef)!node
+    (Branch base_stats base_parent _) = base_node
+    (_, _, base_level, base_state) = base_stats
 
-    -- prepare for the new node
-    (AsList _ new_moves) = (getAt #possibleMoves game) curr_state
-    new_move = new_moves.(randIdx key)
-    new_state = (getAt #update game) curr_state new_move
-    new_stats = (0, 0, curr_level + 1, new_state)
+    -- prepare child nodes
+    (AsList n base_moves) = (getAt #possibleMoves game) base_state
+    child_nodes = for i.
+      new_move = base_moves.i
+      new_state = (getAt #update game) base_state new_move
+      new_stats = (0, 0, base_level + 1, new_state)
+      Branch new_stats (Just node) (toList [])
 
-    -- write the new node to the tree
+    -- write to the tree
     new_node = get (sndRef treeRef)
-    curr_children' = concat [curr_children, toList [new_node]]
-    (fstRef treeRef)!node := Just $ Branch curr_stats curr_parent curr_children'
-    (fstRef treeRef)!new_node := Just $ Branch new_stats (Just node) (toList [])
-    sndRef treeRef := new_node +! 1
+    base_children_ix = for i:(Fin n). new_node +! (ordinal i)
+    -- update base's children list
+    new_base_node = Branch base_stats base_parent (toList base_children_ix)
+    (fstRef treeRef)!node := Just new_base_node
+    -- insert every child
+    for i.
+      child_ix = base_children_ix.i
+      (fstRef treeRef)!child_ix := Just child_nodes.i
+    sndRef treeRef := new_node +! n
+
+    -- choose a random move
+    new_move = base_moves.(randIdx key)
+    new_state = (getAt #update game) base_state new_move
+    new_state
 
 
 def rollout (game: Game state move)
@@ -89,7 +102,7 @@ def rollout (game: Game state move)
       if (getAt #gameOver game) curr_state
         then
           result = (getAt #winOrLose game) curr_state
-          Done $ xor (isEven i) result -- todo
+          Done $ xor (isEven i) result -- todo: double check
         else
           new_move = new_moves.(randIdx (hash key i))
           ref := (getAt #update game) curr_state new_move
@@ -129,11 +142,17 @@ def backpropagate [Eq nodeIx] (game: Game state move) (currRoot: nodeIx)
       (fstRef treeRef)!(ancestors.i) := Just (Branch new_stats parent children)
     ()
 
-def mcts [Eq nodeIx] (game: Game state move) (key: Key) (currRoot: nodeIx)
+def mcts_sample [Eq nodeIx] (game: Game state move) (key: Key) (currRoot: nodeIx)
         (tree: Tree nodeIx (NodeStats state))
-        : Tree nodeIx (NodeStats state) = 
-    -- todo
-    tree
+        : Tree nodeIx (NodeStats state) =
+    [key1, key2, key3] = splitKey key
+    leaf_selected = mcts_select game currRoot tree key1
+    -- todo: this is a copy of the array for every sampling
+    yieldState tree \treeRef.
+      new_state = expand game treeRef key2 leaf_selected
+      result = rollout game key3 new_state
+      -- todo: flip result depending on the player/level?
+      backpropagate game currRoot treeRef leaf_selected result
 
 ' ### Toy game: Count 21
 
@@ -148,8 +167,10 @@ Count21 : Game Count21State Count21Move = {
 key = newKey 0
 init_node_stats : NodeStats Count21State = (0, 0, 0, 0)
 -- (0 win, 0 loss, level 0, game state 0)
-start_tree = (initTree 10 init_node_stats)
-end_tree = fold start_tree \i:(Fin 10). -- sample ten times
-  mcts Count21 (ixkey key i) (0@_)
+start_tree = initTree 11 init_node_stats
+end_tree = fold start_tree \i:(Fin 5). -- sample five times
+    mcts_sample Count21 (ixkey key i) (0@_)
 
 end_tree
+
+-- todo keep track of `moves`
