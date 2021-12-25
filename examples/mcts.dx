@@ -1,16 +1,17 @@
-' ### Monte Carlo Tree Search
+' ## Monte Carlo Tree Search
 
 def (+!) (n:a) (m:Int) : a = ((ordinal n) + m)@_
-def (-!) (x:n) (z:Int) : n = ((ordinal x) - z)@n
-def replaceInTable (new:a) (ind:n) (arr:n=>a) : (n=>a) = 
-  yieldState arr \ref. ref!ind := new
+def (-!) (n:a) (m:Int) : a = ((ordinal n) - m)@_
+def xor (a:Bool) (b:Bool) : Bool = ((not a) && b) || (a && (not b))
 
+' ### Tree types
 
 data Node nodeIx a =
   Branch content:a parent:(Maybe nodeIx) children:(List (nodeIx))
 
 def Tree (nodeIx:Type) (a:Type) : Type =
-  (nodeIx=>(Maybe (Node nodeIx a)) & nodeIx)  -- Node array, and pointer to last used node.
+  (nodeIx=>(Maybe (Node nodeIx a)) & nodeIx)
+  -- Node array, and pointer to last used node.
 
 def root (tree:Tree nodeIx a) : nodeIx =
   0@_ -- Convention
@@ -24,7 +25,7 @@ def isRoot ((Branch _ parent _):Node node a) : Bool =
 def initTree (maxSize:Int) (default_content:a) : Tree (Fin maxSize) a =
   root = Branch default_content Nothing (AsList 0 [])
   nothings = for i. Nothing
-  initArray = nothings |> replaceInTable (Just root) (0@_)
+  initArray = yieldState nothings \ref. ref!(0@_) := (Just root)
   (initArray, 0@_)
 
 def Game (state:Type) (move:Type) : Type =
@@ -35,29 +36,120 @@ def Game (state:Type) (move:Type) : Type =
     gameOver : state -> Bool &
   }
 
-NodeStats = (Int & Int)
+def NodeStats (state:Type) : Type = 
+  (Int & Int & Int & state)
+  -- (#win, #loss, level, state)
 
-def mcts_select (game: Game state move)
-                (tree: Tree nodeIx NodeStats)
+' ### MCTS functions
+
+def mcts_select (game: Game state move) (currRoot: nodeIx)
+                (tree: Tree nodeIx (NodeStats state))
                 (key: Key) : nodeIx = 
-    todo
+    yieldState currRoot \ref. iter \i.
+      curr_node = fromJust (fst tree).(get ref)
+      if isLeaf curr_node
+        then Done ()
+        else 
+          (Branch _ _ children_list) = curr_node
+          (AsList _ children) = children_list
+          ref := children.(randIdx (hash key i))
+          Continue
+
 
 def expand (game: Game state move)
-           (treeRef: Ref h (Tree nodeIx NodeStats))
+           (treeRef: Ref h (Tree nodeIx (NodeStats state)))
            (key: Key) (node: nodeIx) : {State h} Unit =
-    todo
+    -- assume `node` has a non-terminal state
+    
+    -- extact relevant info from the tree
+    curr_node = fromJust $ get (fstRef treeRef)!node
+    (Branch curr_stats curr_parent curr_children) = curr_node
+    (curr_win, curr_loss, curr_level, curr_state) = curr_stats
+
+    -- prepare for the new node
+    (AsList _ new_moves) = (getAt #possibleMoves game) curr_state
+    new_move = new_moves.(randIdx key)
+    new_state = (getAt #update game) curr_state new_move
+    new_stats = (0, 0, curr_level + 1, new_state)
+
+    -- write the new node to the tree
+    new_node = get (sndRef treeRef)
+    curr_children' = concat [curr_children, toList [new_node]]
+    (fstRef treeRef)!node := Just $ Branch curr_stats curr_parent curr_children'
+    (fstRef treeRef)!new_node := Just $ Branch new_stats (Just node) (toList [])
+    sndRef treeRef := new_node +! 1
+
 
 def rollout (game: Game state move)
-           (key: Key) (curState: state) : Bool =
-    todo
+            (key: Key) (currState: state) : Bool =
+    withState currState \ref. iter \i.
+      curr_state = get ref
+      (AsList _ new_moves) = (getAt #possibleMoves game) curr_state
+      -- ^ should've been in the else block, but the compiler complains
+      if (getAt #gameOver game) curr_state
+        then
+          result = (getAt #winOrLose game) curr_state
+          Done $ xor (isEven i) result -- todo
+        else
+          new_move = new_moves.(randIdx (hash key i))
+          ref := (getAt #update game) curr_state new_move
+          Continue
 
-def backpropagate (game: Game state move)
-           (treeRef: Ref h (Tree nodeIx NodeStats))
+
+def backpropagate [Eq nodeIx] (game: Game state move) (currRoot: nodeIx)
+           (treeRef: Ref h (Tree nodeIx (NodeStats state)))
            (node: nodeIx) (newResult: Bool) : {State h} Unit =
-    todo
+    -- newResult: win or lose w.r.t max_player
 
+    -- collect all ancestors
+    ancestors_list = yieldAccum (ListMonoid nodeIx) \ls.
+      withState node \nodeRef. iter \_.
+        append ls (get nodeRef)
+        curr_node = fromJust $ get (fstRef treeRef)!(get nodeRef)
+        (Branch _ curr_parent _) = curr_node
+        if isNothing curr_parent || currRoot == (get nodeRef)
+          then Done ()
+          else
+            nodeRef := fromJust curr_parent
+            Continue
 
+    -- update win and loss counts
+    (AsList _ ancestors) = ancestors_list
+    for i.
+      -- unpack
+      ancestor = fromJust $ get (fstRef treeRef)!(ancestors.i)
+      (Branch stats parent children) = ancestor
+      (win, loss, level, state) = stats
+      -- compute
+      (new_win, new_loss) = if xor newResult (isEven level)
+        then (win + 1, loss)
+        else (win, loss + 1)
+      -- pack
+      new_stats = (new_win, new_loss, level, state)
+      (fstRef treeRef)!(ancestors.i) := Just (Branch new_stats parent children)
+    ()
 
--- Tests
+def mcts [Eq nodeIx] (game: Game state move) (key: Key) (currRoot: nodeIx)
+        (tree: Tree nodeIx (NodeStats state))
+        : Tree nodeIx (NodeStats state) = 
+    -- todo
+    tree
 
-initTree 10 (0, 0)
+' ### Toy game: Count 21
+
+Count21State = Int
+Count21Move = Int
+Count21 : Game Count21State Count21Move = {
+  possibleMoves = \_. toList [1,2],
+  winOrLose = \sum. sum == 21,
+  update = \sum move. sum + move,
+  gameOver = \sum. sum >= 21,
+}
+key = newKey 0
+init_node_stats : NodeStats Count21State = (0, 0, 0, 0)
+-- (0 win, 0 loss, level 0, game state 0)
+start_tree = (initTree 10 init_node_stats)
+end_tree = fold start_tree \i:(Fin 10). -- sample ten times
+  mcts Count21 (ixkey key i) (0@_)
+
+end_tree
