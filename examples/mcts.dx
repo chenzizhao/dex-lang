@@ -1,7 +1,13 @@
 ' ## Monte Carlo Tree Search
+Follows the convention [here](http://www.incompleteideas.net/609%20dropbox/other%20readings%20and%20resources/MCTS-survey.pdf)\
+Use safe-names-dev build\
+TODOs
+- coordinate `mcts_select` and `expand`
+- (win, loss) -> (win, visited)?
+- flesh out backpropagate
+- actual test cases (on minimax especially)
 
-def (+!) (n:a) (m:Int) : a = ((ordinal n) + m)@_
-def (-!) (n:a) (m:Int) : a = ((ordinal n) - m)@_
+def (+!) {a} (n:a) (m:Int) : a = ((ordinal n) + m)@_
 def xor (a:Bool) (b:Bool) : Bool = ((not a) && b) || (a && (not b))
 
 ' ### Tree types
@@ -13,16 +19,16 @@ def Tree (nodeIx:Type) (a:Type) : Type =
   (nodeIx=>(Maybe (Node nodeIx a)) & nodeIx)
   -- Node array, and pointer to last used node.
 
-def root (tree:Tree nodeIx a) : nodeIx =
+def root {nodeIx a} (tree:Tree nodeIx a) : nodeIx =
   0@_ -- Convention
 
-def isLeaf ((Branch _ _ children):Node node a) : Bool = 
+def isLeaf {node a} ((Branch _ _ children):Node node a) : Bool = 
   listLength children == 0
 
-def isRoot ((Branch _ parent _):Node node a) : Bool = 
+def isRoot {node a} ((Branch _ parent _):Node node a) : Bool = 
   isNothing parent
 
-def initTree (maxSize:Int) (default_content:a) : Tree (Fin maxSize) a =
+def initTree {a} (maxSize:Int) (default_content:a) : Tree (Fin maxSize) a =
   root = Branch default_content Nothing (AsList 0 [])
   nothings = for i. Nothing
   initArray = yieldState nothings \ref. ref!(0@_) := (Just root)
@@ -40,26 +46,55 @@ def NodeStats (state:Type) : Type =
   (Int & Int & Int & state)
   -- (#win, #loss, level, state)
 
+def win_loss_stats {nodeIx state} (node:(Node nodeIx (NodeStats state))) : (Int & Int) = 
+  (Branch stats parent _) = node
+  (win, loss, _, _) = stats
+  (win, loss)
+
+def is_visited {nodeIx state} (node:(Node nodeIx (NodeStats state))) : Bool = 
+  (win, loss) = win_loss_stats node
+  (win + loss) > 0
+
+
 ' ### MCTS functions
 
-def mcts_select (game: Game state move) (currRoot: nodeIx)
-                (tree: Tree nodeIx (NodeStats state))
-                (key: Key) : nodeIx = 
-    yieldState currRoot \ref. iter \i.
-      curr_node = fromJust (fst tree).(get ref)
-      if isLeaf curr_node
-        then Done ()
-        else 
-          (Branch _ _ children_list) = curr_node
+def uct (win:Int) (n:Int) (parent_n:Int) : Float = 
+  (IToF win) / (IToF n) + sqrt (2.0 / (IToF parent_n) * (log (IToF n)))
+
+def mcts_select {move state nodeIx}
+    (game: Game state move) (currRoot: nodeIx)
+    (tree: Tree nodeIx (NodeStats state))
+    : nodeIx = 
+    arr = fst tree
+    if isLeaf $ fromJust arr.currRoot
+      then currRoot
+      else
+        yieldState currRoot \ref. iter \i.
+          node = fromJust arr.(get ref)
+          (Branch _ _ children_list) = node
           (AsList _ children) = children_list
-          -- todo: UCT formula
-          ref := children.(randIdx (hash key i))
-          Continue
+          fully_expanded = any for i.
+            is_visited $ fromJust arr.(children.i)
+
+          if not fully_expanded
+            then
+              -- expand it
+              Done ()
+            else
+              (win, loss) = win_loss_stats node
+              p_n = win + loss
+              best_child = argmax for i.
+                child = fromJust arr.(children.i)
+                (win, loss) = win_loss_stats child
+                uct win (win + loss) p_n
+              ref := children.best_child
+              Continue
 
 
-def expand (game: Game state move)
-           (treeRef: Ref h (Tree nodeIx (NodeStats state)))
-           (key: Key) (node: nodeIx) : {State h} (nodeIx & state) =
+def expand {move state nodeIx h}
+    (game: Game state move)
+    (treeRef: Ref h (Tree nodeIx (NodeStats state)))
+    (key: Key) (node: nodeIx) : {State h} (nodeIx & state) =
     -- assume `node` is a leaf node (base) and has a non-terminal state (base_state)
     
     -- extract info about the base node
@@ -94,8 +129,9 @@ def expand (game: Game state move)
     (base_children_ix.move_ix, new_state)
 
 
-def rollout (game: Game state move)
-            (key: Key) (currState: state) : Bool =
+def rollout {move state}
+    (game: Game state move)
+    (key: Key) (currState: state) : Bool =
     -- result is w.r.t. the max player
     withState currState \ref. iter \i.
       curr_state = get ref
@@ -106,14 +142,16 @@ def rollout (game: Game state move)
           result = (getAt #winOrLose game) curr_state
           Done $ xor (isEven i) result
         else
+        -- rollout policy: uniform random
           new_move = new_moves.(randIdx (hash key i))
           ref := (getAt #update game) curr_state new_move
           Continue
 
 
-def backpropagate [Eq nodeIx] (game: Game state move) (currRoot: nodeIx)
-           (treeRef: Ref h (Tree nodeIx (NodeStats state)))
-           (node: nodeIx) (newResult: Bool) : {State h} Unit =
+def backpropagate {move state nodeIx} {h} [Eq nodeIx] 
+    (game: Game state move) (currRoot: nodeIx)
+    (treeRef: Ref h (Tree nodeIx (NodeStats state)))
+    (node: nodeIx) (newResult: Bool) : {State h} Unit =
     -- newResult: win or lose w.r.t max_player
 
     -- collect itself and all ancestors
@@ -144,11 +182,13 @@ def backpropagate [Eq nodeIx] (game: Game state move) (currRoot: nodeIx)
       (fstRef treeRef)!(ancestors.i) := Just (Branch new_stats parent children)
     ()
 
-def mcts_sample [Eq nodeIx] (game: Game state move) (key: Key) (currRoot: nodeIx)
-        (tree: Tree nodeIx (NodeStats state))
-        : Tree nodeIx (NodeStats state) =
+def mcts_sample {move state nodeIx} [Eq nodeIx]
+    (game: Game state move) (key: Key) (currRoot: nodeIx)
+    (tree: Tree nodeIx (NodeStats state))
+    : Tree nodeIx (NodeStats state) =
     [key1, key2, key3] = splitKey key
-    leaf_ix = mcts_select game currRoot tree key1
+    -- most certainly not a leaf here. 
+    leaf_ix = mcts_select game currRoot tree
     -- todo: this is a copy of the array for every sampling
     yieldState tree \treeRef.
       (child_ix, child_state) = expand game treeRef key2 leaf_ix
@@ -173,5 +213,3 @@ end_tree = fold start_tree \i:(Fin 5). -- sample five times
     mcts_sample Count21 (ixkey key i) (0@_)
 
 end_tree
-
--- todo keep track of `moves`
