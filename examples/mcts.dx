@@ -1,9 +1,12 @@
 ' ## Monte Carlo Tree Search
-Follows the convention [here](http://www.incompleteideas.net/609%20dropbox/other%20readings%20and%20resources/MCTS-survey.pdf)\
-Use safe-names-dev build\
-TODOs
-- flesh out backpropagate
-- actual test cases (on minimax especially)
+MCTS is part of the decision engine behind the notable AlphaGo program.
+It uses the expected outcome as a heuristic for tree searching.
+Here we implement the variant with minimax search and upper
+confidence bound for trees (uct).
+This demo implements a doubly-linked tree structure as a Dex array,
+and traverses its branches by indexing.
+- [reference](http://www.incompleteideas.net/609%20dropbox/other%20readings%20and%20resources/MCTS-survey.pdf)
+- Use safe-names-dev build
 
 def (+!) {a} (n:a) (m:Int) : a = ((ordinal n) + m)@_
 def xor (a:Bool) (b:Bool) : Bool = ((not a) && b) || (a && (not b))
@@ -23,14 +26,16 @@ def root {nodeIx a} (tree:Tree nodeIx a) : nodeIx =
 def isLeaf {node a} ((Branch _ _ children):Node node a) : Bool = 
   listLength children == 0
 
-def isRoot {node a} ((Branch _ parent _):Node node a) : Bool = 
+def isRoot {node a} ((Branch _ parent _):Node node a) : Bool =
   isNothing parent
 
-def initTree {a} (maxSize:Int) (default_content:a) : Tree (Fin maxSize) a =
-  root = Branch default_content Nothing (AsList 0 [])
+def initTree {a} (maxSize:Int) (defaultContent:a) : Tree (Fin maxSize) a =
+  root = Branch defaultContent Nothing (AsList 0 [])
   nothings = for i. Nothing
   initArray = yieldState nothings \ref. ref!(0@_) := (Just root)
   (initArray, 0@_)
+
+' ### Game and Node utilities
 
 def Game (state:Type) (move:Type) : Type =
   {
@@ -67,26 +72,34 @@ def node_level {nodeIx state} (node:(Node nodeIx (NodeStats state))) : Int =
 
 ' ### MCTS functions
 
+' Let $n$ be a node. The reward $Q(n)$ summarizes the performance of $n$'s subtree.
+$N(n)$ is the number of visits of $n$. $n_p$ is the parent of node $n$.
+The upper confidence bound for trees is a metric that balances
+exploration vs exploitation, which are weighed by $1:\sqrt{2}$ here.
+The upper confidence bound for trees of node $n$ is
+$$UCT(n) = \frac{Q(n)}{N(n)} + \sqrt{2\frac{ln(N(n_p))}{N(n)}}$$
+
 def uct (win:Int) (n:Int) (parent_n:Int) : Float = 
-  (IToF win) / (IToF n) + sqrt (2.0 / (IToF parent_n) * (log (IToF n)))
+  -- wins stored at every node are w.r.t to the max_player
+  (IToF win) / (IToF n) + sqrt (2.0 / (IToF n) * (log (IToF parent_n)))
+
+
+'Recursively fine the most promising leaf (measured by UCT) to rollout next.
 
 def mcts_select {move state nodeIx}
-    (game: Game state move) (currRoot: nodeIx)
-    (tree: Tree nodeIx (NodeStats state))
-    (key: Key)
+    (game: Game state move) (tree: Tree nodeIx (NodeStats state)) (key: Key)
     : nodeIx = 
     arr = fst tree
-    is_max_player = arr.currRoot |> fromJust |> node_level |> isEven
 
-    yieldState currRoot \ref. iter \i.
+    yieldState (root tree) \ref. iter \i.
       node = fromJust arr.(get ref)
       if isLeaf node
         then
           Done ()
         else
-          (Branch _ _ children_list) = node
+          (Branch stats _ children_list) = node
           (AsList _ children) = children_list
-          fully_expanded = any for i.
+          fully_expanded = all for i.
             node_is_visited $ fromJust arr.(children.i)
           if not fully_expanded
             then
@@ -96,8 +109,9 @@ def mcts_select {move state nodeIx}
               Done ()
             else
               (_, p_visits) = node_win_visit_stats node
-              -- selector = if is_max_player then argmax else argmin
-              selector = if is_max_player then argmax else argmax
+              -- minimax
+              is_max_player = isEven $ node_level node
+              selector = if is_max_player then argmax else argmin
               best_child = selector for i.
                 child = fromJust arr.(children.i)
                 (win, visits) = node_win_visit_stats child
@@ -105,11 +119,12 @@ def mcts_select {move state nodeIx}
               ref := children.best_child
               Continue
 
+' Expand the tree (in-place) by adding states one-move away from the current state.
 
 def expand {move state nodeIx h}
     (game: Game state move)
     (treeRef: Ref h (Tree nodeIx (NodeStats state)))
-    (key: Key) (node: nodeIx) : {State h} Unit =
+    (node: nodeIx) : {State h} Unit =
     -- assume `node` is a leaf node (base) and has a non-terminal state (base_state)
 
     -- extract info about the base node
@@ -137,6 +152,8 @@ def expand {move state nodeIx h}
       (fstRef treeRef)!child_ix := Just child_nodes.i
     sndRef treeRef := new_node +! n
 
+' Simulate the game starting at a given state until the game terminates and
+return the simulation result.
 
 def rollout {move state}
     (game: Game state move)
@@ -157,17 +174,19 @@ def rollout {move state}
           ref := (getAt #update game) curr_state new_move
           Continue
 
+' Update the record of a node and its chain of ancestors,
+based on the simulation result.
 
 def backpropagate {move state nodeIx} {h} [Eq nodeIx] 
-    (game: Game state move) (currRoot: nodeIx)
+    (game: Game state move)
     (treeRef: Ref h (Tree nodeIx (NodeStats state)))
     (node: nodeIx) (newResult: Bool) : {State h} Unit =
     -- newResult: win or lose w.r.t curr_player @node
-
-    leaf_not_max_player = get (fstRef treeRef)!node |>
+    currRoot = 0@nodeIx
+    leaf_min_player = get (fstRef treeRef)!node |>
       fromJust |> node_level |> isOdd
-    maxResult = xor newResult leaf_not_max_player
-    -- maxResult: win or lose w.r.t. max player
+    maxResult = xor newResult leaf_min_player
+    -- maxResult: rollout win or lose w.r.t. max player
 
     -- collect itself and all ancestors
     ancestors_list = yieldAccum (ListMonoid nodeIx) \ls.
@@ -189,89 +208,132 @@ def backpropagate {move state nodeIx} {h} [Eq nodeIx]
       (Branch stats parent children) = ancestor
       (wins, visits, level, state) = stats
       -- compute
-      ancestor_not_max_player = isOdd level
-      -- todo
-      ancestorResult = xor maxResult ancestor_not_max_player
-      (new_wins, new_visits) = if ancestorResult
+      (new_wins, new_visits) = if maxResult
         then (wins + 1, visits + 1)
-        else (wins - 1, visits + 1)
+        else (wins, visits + 1)
       -- pack
       new_stats = (new_wins, new_visits, level, state)
       (fstRef treeRef)!(ancestors.i) := Just (Branch new_stats parent children)
     ()
 
+' Wrap up the procedure for taking one sample and extend the tree.
+
 def mcts_sample {move state nodeIx} [Eq nodeIx]
-    (game: Game state move) (key: Key) (currRoot: nodeIx)
+    (game: Game state move) (key: Key)
     (tree: Tree nodeIx (NodeStats state))
     : Tree nodeIx (NodeStats state) =
-    [key1, key2, key3] = splitKey key
-    leaf_ix = mcts_select game currRoot tree key1
+    [key1, key2] = splitKey key
+    leaf_ix = mcts_select game tree key1
     leaf = fromJust (fst tree).leaf_ix
     -- todo: this is a copy of the array for every sampling
     yieldState tree \treeRef.
       if not $ (getAt #gameOver game) $ node_state leaf then
-        expand game treeRef key2 leaf_ix
-      result = rollout game key3 $ node_state leaf
-      backpropagate game currRoot treeRef leaf_ix result
-
-def mcts_choose {move state nodeIx} [Eq nodeIx]
-  (game: Game state move) (currRoot: nodeIx)
-  (tree: Tree nodeIx (NodeStats state))
-  : nodeIx = -- not the best, should return a move to uncover states
-    arr = fst tree
-    node = fromJust arr.currRoot
-    is_max_player = isEven $ node_level node
-    (Branch _ _ children_list) = node
-    (AsList _ children) = children_list
-    (_, p_visits) = node_win_visit_stats node
-    -- selector = if is_max_player then argmax else argmin
-    selector = if is_max_player then argmax else argmax
-    best_child = selector for i.
-      child = fromJust arr.(children.i)
-      (win, visits) = node_win_visit_stats child
-      uct win visits p_visits
-    children.best_child
-
+        expand game treeRef leaf_ix
+      result = rollout game key2 $ node_state leaf
+      backpropagate game treeRef leaf_ix result
 
 ' ### Toy game: Count 21
+This is a simple two-player game. Starting from 0, each player in turn chooses
+to add 1 or 2 to the current sum. The player who reaches 21 wins.
 
 Count21State = Int
 Count21Move = Int
 Count21 : Game Count21State Count21Move = {
-  possibleMoves = \_. toList [1,2],
+  possibleMoves = \sum. toList [1,2],
   winOrLose = \sum. sum == 21,
   update = \sum move. sum + move,
   gameOver = \sum. sum >= 21,
 }
+
+' #### Approximate winning chances by sampling
+In theory, multiples of three are bad positions for the current player,
+since the opponent has a winning strategy by always choosing
+(3 - move by the current player). Otherwise, the current player
+has a winning strategy.
+
 key = newKey 0
-init_node_stats : NodeStats Count21State = (0, 0, 0, 19)
--- (0 wins, 0 visits, level 0, game state 0)
-start_tree = initTree 12 init_node_stats
-end_tree = fold start_tree \i:(Fin 10). -- sample five times
-    mcts_sample Count21 (ixkey key i) (0@_)
+
+def test (key:Key) (initState:Int) : (Int & Int) = 
+  init_node_stats : NodeStats Count21State = (0, 0, 0, initState)
+  -- (0 wins, 0 visits, level 0, game state)
+  start_tree = initTree 70 init_node_stats
+  end_tree = fold start_tree \i:(Fin 50).
+    mcts_sample Count21 (ixkey key i)
+  node_win_visit_stats $ fromJust (fst end_tree).(root end_tree)
+
+test key 21
+> (0, 50)
+test key 20
+> (46, 50)
+test key 19
+> (45, 50)
+test key 18
+> (1, 50)
+test key 17
+> (39, 50)
+test key 16
+> (39, 50)
+test key 15
+> (8, 50)
+test key 14
+> (34, 50)
+test key 13
+> (31, 50)
+test key 12
+> (25, 50)
+
+' With fixed number (50) of samples, fully explored trees
+(`initState` close to 21) yields extreme win/visits ratios.\
+On the other hand, large trees need more samples to converge.
+
+' #### A closer look at the game tree
+Say the current sum is 17,
+the winning move for the current player is to add 1.
+In the following tree, we see adding 1 (the second node)
+is indeed considered a more promising choice by `uct`
+and enjoys more traffic than its sibiling (adding 2, the third node).
+
+init_node_stats : NodeStats Count21State = (0, 0, 0, 17)
+start_tree = initTree 15 init_node_stats
+end_tree = fold start_tree \i:(Fin 50).
+  mcts_sample Count21 (ixkey key i)
 
 end_tree
+> ( [ (Just (Branch (39, (50, (0, 17))) Nothing (AsList 2 [(1@Fin 15), (2@Fin 15)])))
+> , (Just (Branch (38, (44, (1, 18))) (Just (0@Fin 15)) (AsList 2 [ (3@Fin 15)
+>                                                               , (4@Fin 15) ])))
+> , (Just (Branch (0, (5, (1, 19))) (Just (0@Fin 15)) (AsList 2 [ (5@Fin 15)
+>                                                             , (6@Fin 15) ])))
+> , (Just (Branch (1, (1, (2, 19))) (Just (1@Fin 15)) (AsList 2 [ (9@Fin 15)
+>                                                             , (10@Fin 15) ])))
+> , (Just (Branch (37, (42, (2, 20))) (Just (1@Fin 15)) (AsList 2 [ (11@Fin 15)
+>                                                               , (12@Fin 15) ])))
+> , (Just (Branch (0, (1, (2, 20))) (Just (2@Fin 15)) (AsList 2 [ (7@Fin 15)
+>                                                             , (8@Fin 15) ])))
+> , (Just (Branch (0, (3, (2, 21))) (Just (2@Fin 15)) (AsList 0 [])))
+> , (Just (Branch (0, (0, (3, 21))) (Just (5@Fin 15)) (AsList 0 [])))
+> , (Just (Branch (0, (0, (3, 22))) (Just (5@Fin 15)) (AsList 0 [])))
+> , (Just (Branch (0, (0, (3, 20))) (Just (3@Fin 15)) (AsList 0 [])))
+> , (Just (Branch (0, (0, (3, 21))) (Just (3@Fin 15)) (AsList 0 [])))
+> , (Just (Branch (37, (37, (3, 21))) (Just (4@Fin 15)) (AsList 0 [])))
+> , (Just (Branch (0, (4, (3, 22))) (Just (4@Fin 15)) (AsList 0 [])))
+> , Nothing
+> , Nothing ]
+> , (12@Fin 15) )
 
-game = Count21
-
-mcts_choose game (0@_) end_tree
-
-tree = start_tree
-
-[key1, key2, key3] = splitKey key
-leaf_ix = mcts_select game (0@_) tree key1
-leaf = fromJust (fst tree).leaf_ix
-
-leaf
-
-res1 = runState tree \treeRef.
-  if not $ (getAt #gameOver game) $ node_state leaf
-    then expand game treeRef key2 leaf_ix
-  result = rollout game key3 $ node_state leaf
-  backpropagate game (0@_) treeRef leaf_ix result
-  result
-
-res1
-
-rollout game key3 21
-
+-- def test_ucts {nodeIx state}
+--   (tree: Tree nodeIx (NodeStats state))
+--   : nodeIx => Maybe Float =
+--   for i.
+--     case (fst tree).i of
+--       Nothing -> Nothing
+--       Just node ->
+--         (Branch stats parent _) = node
+--         case parent of
+--           Nothing -> Nothing
+--           Just parent_ix ->
+--             (_, p_n) = node_win_visit_stats $ fromJust $ (fst tree).parent_ix
+--             (w, n) = node_win_visit_stats node
+--             Just $ uct w n p_n
+-- ucts = test_ucts end_tree
+-- for i. (i, ucts.i, (fst end_tree).i)
