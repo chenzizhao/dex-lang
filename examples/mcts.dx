@@ -8,15 +8,15 @@ and traverses its branches by indexing.
 - [reference](http://www.incompleteideas.net/609%20dropbox/other%20readings%20and%20resources/MCTS-survey.pdf)
 - Use safe-names-dev build
 
-def (+!) {a} (n:a) (m:Int) : a = ((ordinal n) + m)@_
+def (+!) {a} [Ix a] (n:a) (m:Int) : a = ((ordinal n) + m)@_
 def xor (a:Bool) (b:Bool) : Bool = ((not a) && b) || (a && (not b))
 
 ' ### Tree types
 
-data Node nodeIx a =
+data  Node nodeIx a =
   Branch content:a parent:(Maybe nodeIx) children:(List (nodeIx))
 
-def Tree (nodeIx:Type) (a:Type) : Type =
+def Tree (nodeIx:Type) (a:Type) [Ix nodeIx] : Type =
   (nodeIx=>(Maybe (Node nodeIx a)) & nodeIx)
   -- Node array, and pointer to last used node.
 
@@ -24,15 +24,16 @@ def root {nodeIx a} (tree:Tree nodeIx a) : nodeIx =
   0@_ -- Convention
 
 def isLeaf {node a} ((Branch _ _ children):Node node a) : Bool = 
-  listLength children == 0
+  list_length children == 0
 
 def isRoot {node a} ((Branch _ parent _):Node node a) : Bool =
-  isNothing parent
+  is_nothing parent
 
-def initTree {a} (maxSize:Int) (defaultContent:a) : Tree (Fin maxSize) a =
+def initTree {a} (maxSize:Int) (defaultContent:a)
+  : Tree (Fin maxSize) a =
   root = Branch defaultContent Nothing (AsList 0 [])
   nothings = for i. Nothing
-  initArray = yieldState nothings \ref. ref!(0@_) := (Just root)
+  initArray = yield_state nothings \ref. ref!(0@_) := (Just root)
   (initArray, 0@_)
 
 ' ### Game and Node utilities
@@ -46,11 +47,11 @@ def Game (state:Type) (move:Type) : Type =
   }
 
 def NodeStats (state:Type) : Type = 
-  (Int & Int & Int & state)
-  -- (#wins, #visit, level, state)
+  (Float & Int & Int & state)
+  -- (average wins, #visit, level, state)
 
 def node_win_visit_stats {nodeIx state} (node:(Node nodeIx (NodeStats state)))
-  : (Int & Int) =
+  : (Float & Int) =
   (Branch stats _ _) = node
   (wins, visits, _, _) = stats
   (wins, visits)
@@ -79,20 +80,19 @@ exploration vs exploitation, which are weighed by $1:\sqrt{2}$ here.
 The upper confidence bound for trees of node $n$ is
 $$UCT(n) = \frac{Q(n)}{N(n)} + \sqrt{2\frac{ln(N(n_p))}{N(n)}}$$
 
-def uct (win:Int) (n:Int) (parent_n:Int) : Float = 
+def uct (win:Float) (n:Int) (parent_n:Int) : Float = 
   -- wins stored at every node are w.r.t to the max_player
-  (IToF win) / (IToF n) + sqrt (2.0 / (IToF n) * (log (IToF parent_n)))
+  win / (i_to_f n) + sqrt (2.0 / (i_to_f n) * (log (i_to_f parent_n)))
 
-
-'Recursively fine the most promising leaf (measured by UCT) to rollout next.
+'Recursively find the most promising leaf (measured by UCT) to rollout next.
 
 def mcts_select {move state nodeIx}
     (game: Game state move) (tree: Tree nodeIx (NodeStats state)) (key: Key)
     : nodeIx = 
     arr = fst tree
 
-    yieldState (root tree) \ref. iter \i.
-      node = fromJust arr.(get ref)
+    yield_state (root tree) \ref. iter \i.
+      node = from_just arr.(get ref)
       if isLeaf node
         then
           Done ()
@@ -100,20 +100,21 @@ def mcts_select {move state nodeIx}
           (Branch stats _ children_list) = node
           (AsList _ children) = children_list
           fully_expanded = all for i.
-            node_is_visited $ fromJust arr.(children.i)
+            node_is_visited $ from_just arr.(children.i)
           if not fully_expanded
             then
-              (AsList _ unvisited) = (flip filter) children \child.
-                not $ node_is_visited $ fromJust arr.child
-              ref := unvisited.(randIdx key)
+              criterion = \child.
+                not $ node_is_visited $ from_just arr.child
+              (AsList _ unvisited) = filter criterion children 
+              ref := unvisited.(rand_idx key)
               Done ()
             else
               (_, p_visits) = node_win_visit_stats node
               -- minimax
-              is_max_player = isEven $ node_level node
+              is_max_player = is_even $ node_level node
               selector = if is_max_player then argmax else argmin
               best_child = selector for i.
-                child = fromJust arr.(children.i)
+                child = from_just arr.(children.i)
                 (win, visits) = node_win_visit_stats child
                 uct win visits p_visits
               ref := children.best_child
@@ -128,29 +129,29 @@ def expand {move state nodeIx h}
     -- assume `node` is a leaf node (base) and has a non-terminal state (base_state)
 
     -- extract info about the base node
-    base_node = fromJust $ get (fstRef treeRef)!node
+    base_node = from_just $ get (fst_ref treeRef)!node
     (Branch base_stats base_parent _) = base_node
     (_, _, base_level, base_state) = base_stats
 
     -- prepare child nodes
-    (AsList n base_moves) = (getAt #possibleMoves game) base_state
+    (AsList n base_moves) = (get_at #possibleMoves game) base_state
     child_nodes = for i.
       new_move = base_moves.i
-      new_state = (getAt #update game) base_state new_move
+      new_state = (get_at #update game) base_state new_move
       new_stats = (0, 0, base_level + 1, new_state)
-      Branch new_stats (Just node) (toList [])
+      Branch new_stats (Just node) (to_list [])
 
     -- write to the tree
-    new_node = get (sndRef treeRef)
+    new_node = get (snd_ref treeRef)
     base_children_ix = for i:(Fin n). new_node +! (1 + ordinal i)
     -- update base's children list
-    new_base_node = Branch base_stats base_parent (toList base_children_ix)
-    (fstRef treeRef)!node := Just new_base_node
+    new_base_node = Branch base_stats base_parent (to_list base_children_ix)
+    (fst_ref treeRef)!node := Just new_base_node
     -- insert every child
     for i.
       child_ix = base_children_ix.i
-      (fstRef treeRef)!child_ix := Just child_nodes.i
-    sndRef treeRef := new_node +! n
+      (fst_ref treeRef)!child_ix := Just child_nodes.i
+    snd_ref treeRef := new_node +! n
 
 ' Simulate the game starting at a given state until the game terminates and
 return the simulation result.
@@ -159,61 +160,60 @@ def rollout {move state}
     (game: Game state move)
     (key: Key) (currState: state) : Bool =
     -- output is w.r.t. current player
-    withState currState \ref. iter \i.
+    with_state currState \ref. iter \i.
       curr_state = get ref
-      (AsList _ new_moves) = (getAt #possibleMoves game) curr_state
+      (AsList _ new_moves) = (get_at #possibleMoves game) curr_state
       -- ^ should've been in the else block, but the compiler complains
-      if (getAt #gameOver game) curr_state
+      if (get_at #gameOver game) curr_state
         then
           -- #winOrLose is w.r.t. the last player
-          result = (getAt #winOrLose game) curr_state
-          Done $ xor (isEven i) result
+          result = (get_at #winOrLose game) curr_state
+          Done $ xor (is_even i) result
         else
         -- rollout policy: uniform random
-          new_move = new_moves.(randIdx (hash key i))
-          ref := (getAt #update game) curr_state new_move
+          new_move = new_moves.(rand_idx (hash key i))
+          ref := (get_at #update game) curr_state new_move
           Continue
 
 ' Update the record of a node and its chain of ancestors,
 based on the simulation result.
 
-def backpropagate {move state nodeIx} {h} [Eq nodeIx] 
+def backpropagate {move state nodeIx h} [Eq nodeIx] 
     (game: Game state move)
     (treeRef: Ref h (Tree nodeIx (NodeStats state)))
-    (node: nodeIx) (newResult: Bool) : {State h} Unit =
+    (node: nodeIx) (newResult: Float) : {State h} Unit =
     -- newResult: win or lose w.r.t curr_player @node
     currRoot = 0@nodeIx
-    leaf_min_player = get (fstRef treeRef)!node |>
-      fromJust |> node_level |> isOdd
-    maxResult = xor newResult leaf_min_player
-    -- maxResult: rollout win or lose w.r.t. max player
+    leaf_min_player = get (fst_ref treeRef)!node |>
+      from_just |> node_level |> is_odd
+    maxResult = if leaf_min_player 
+                    then (1. - newResult)
+                    else newResult
 
     -- collect itself and all ancestors
     ancestors_list = yieldAccum (ListMonoid nodeIx) \ls.
-      withState node \nodeRef. iter \_.
+      with_state node \nodeRef. iter \_.
         append ls (get nodeRef)
-        curr_node = fromJust $ get (fstRef treeRef)!(get nodeRef)
+        curr_node = from_just $ get (fst_ref treeRef)!(get nodeRef)
         (Branch _ curr_parent _) = curr_node
-        if isNothing curr_parent || currRoot == (get nodeRef)
+        if is_nothing curr_parent || currRoot == (get nodeRef)
           then Done ()
           else
-            nodeRef := fromJust curr_parent
+            nodeRef := from_just curr_parent
             Continue
 
     -- update win and loss counts
     (AsList _ ancestors) = ancestors_list
     for i.
       -- unpack
-      ancestor = fromJust $ get (fstRef treeRef)!(ancestors.i)
+      ancestor = from_just $ get (fst_ref treeRef)!(ancestors.i)
       (Branch stats parent children) = ancestor
       (wins, visits, level, state) = stats
       -- compute
-      (new_wins, new_visits) = if maxResult
-        then (wins + 1, visits + 1)
-        else (wins, visits + 1)
+      (new_wins, new_visits) = (wins + maxResult, visits + 1)
       -- pack
       new_stats = (new_wins, new_visits, level, state)
-      (fstRef treeRef)!(ancestors.i) := Just (Branch new_stats parent children)
+      (fst_ref treeRef)!(ancestors.i) := Just (Branch new_stats parent children)
     ()
 
 ' Wrap up the procedure for taking one sample and extend the tree.
@@ -222,14 +222,20 @@ def mcts_sample {move state nodeIx} [Eq nodeIx]
     (game: Game state move) (key: Key)
     (tree: Tree nodeIx (NodeStats state))
     : Tree nodeIx (NodeStats state) =
-    [key1, key2] = splitKey key
+    [key1, key2] = split_key key
     leaf_ix = mcts_select game tree key1
-    leaf = fromJust (fst tree).leaf_ix
+    leaf = from_just (fst tree).leaf_ix
     -- todo: this is a copy of the array for every sampling
-    yieldState tree \treeRef.
-      if not $ (getAt #gameOver game) $ node_state leaf then
+    yield_state tree \treeRef.
+      if not $ (get_at #gameOver game) $ node_state leaf then
         expand game treeRef leaf_ix
-      result = rollout game key2 $ node_state leaf
+      num_leaf_rollouts = 10
+      result = yieldAccum (AddMonoid Float) \c.
+        for i:(Fin num_leaf_rollouts).
+          key' = ixkey key i
+          c += if rollout game key' $ node_state leaf 
+            then 1. / (i_to_f num_leaf_rollouts)
+            else 0.
       backpropagate game treeRef leaf_ix result
 
 ' ### Toy game: Count 21
@@ -239,7 +245,7 @@ to add 1 or 2 to the current sum. The player who reaches 21 wins.
 Count21State = Int
 Count21Move = Int
 Count21 : Game Count21State Count21Move = {
-  possibleMoves = \sum. toList [1,2],
+  possibleMoves = \sum. to_list [1,2],
   winOrLose = \sum. sum == 21,
   update = \sum move. sum + move,
   gameOver = \sum. sum >= 21,
@@ -251,15 +257,15 @@ since the opponent has a winning strategy by always choosing
 (3 - move by the current player). Otherwise, the current player
 has a winning strategy.
 
-key = newKey 0
+key = new_key 0
 
-def test (key:Key) (initState:Int) : (Int & Int) = 
+def test (key:Key) (initState:Int) : (Float & Int) = 
   init_node_stats : NodeStats Count21State = (0, 0, 0, initState)
   -- (0 wins, 0 visits, level 0, game state)
   start_tree = initTree 70 init_node_stats
   end_tree = fold start_tree \i:(Fin 50).
     mcts_sample Count21 (ixkey key i)
-  node_win_visit_stats $ fromJust (fst end_tree).(root end_tree)
+  node_win_visit_stats $ from_just (fst end_tree).(root end_tree)
 
 test key 21
 > (0, 50)
@@ -332,7 +338,7 @@ end_tree
 --         case parent of
 --           Nothing -> Nothing
 --           Just parent_ix ->
---             (_, p_n) = node_win_visit_stats $ fromJust $ (fst tree).parent_ix
+--             (_, p_n) = node_win_visit_stats $ from_just $ (fst tree).parent_ix
 --             (w, n) = node_win_visit_stats node
 --             Just $ uct w n p_n
 -- ucts = test_ucts end_tree
